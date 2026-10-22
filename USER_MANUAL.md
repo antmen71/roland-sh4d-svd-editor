@@ -53,7 +53,7 @@ To edit your patterns, patches, and rhythm kits offline in `.SVD` format and loa
 
 ### Exporting a Backup from the SH-4d to Your Computer
 1. Connect the **Roland SH-4d** to your computer via USB-C.
-2. Turn on the SH-4d while holding down the **`[MENU]`** button (or go to **`MENU` -> `UTILITY` -> `STORAGE MODE`**) to mount the SH-4d internal drive on your computer, or perform a **`BACKUP`** first in **`MENU` -> `UTILITY` -> `BACKUP`**.
+2. Turn on the SH-4d while holding down the **`[EXIT]`** button (or go to **`MENU` -> `UTILITY` -> `STORAGE MODE`**) to mount the SH-4d internal drive on your computer, or perform a **`BACKUP`** first in **`MENU` -> `UTILITY` -> `BACKUP`**.
 3. Open the mounted USB drive on your computer and locate the backup file inside `ROLAND/BACKUP/SH4d.SVD` (approx. `4,385,916 bytes`).
 4. Copy `SH4d.SVD` to your computer (e.g., `Downloads/SH4d.SVD`) and open it in this editor.
 
