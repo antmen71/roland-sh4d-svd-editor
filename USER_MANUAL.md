@@ -59,8 +59,14 @@ To edit your patterns, patches, and rhythm kits offline in `.SVD` format and loa
 
 ### Restoring Your Edited `SH4d.SVD` Back to the SH-4d
 1. After editing in the app, click **`💾 Save (.bak)`** (or **`💾 Save As...`**).
-2. Copy the saved `SH4d.SVD` file back into the `ROLAND/BACKUP/` folder on the SH-4d USB storage drive.
-3. Eject the USB drive safely on your computer, then execute **`RESTORE`** on the SH-4d (**`MENU` -> `UTILITY` -> `RESTORE`**).
+2. Connect your computer to the SH-4d’s USB port via USB cable.
+3. While holding down the [START] button, turn the power on.
+4. Open the “SH-4D” drive on your computer.
+5. The backup files are copied to the “RESTORE” folder on the “SH-4D” drive.
+6. Copy the saved `SH4d.SVD` file back into the `ROLAND/BACKUP/` folder on the SH-4d USB storage drive.
+7. Once copying is finished, eject the USB drive from your computer, and press the [ENTER] button.
+8. Once the message “Completed. Turn the power off.” appears on the screen, turn this unit off
+
 
 ---
 
