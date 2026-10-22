@@ -1,6 +1,6 @@
-MIT License
+MIT License & Hardware/Data Limitation of Liability
 
-Copyright (c) 2026 Orkun Antmen (antmen71)
+Copyright (c) 2026 antmen71
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -9,13 +9,40 @@ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+The above copyright notice, this permission notice, and the Disclaimer below
+shall be included in all copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+==============================================================================
+DISCLAIMER OF WARRANTY & LIMITATION OF LIABILITY (USE AT YOUR OWN RISK)
+==============================================================================
+
+1. UNOFFICIAL TOOL:
+   This Software is an independent, unofficial, experimental tool created via
+   reverse-engineering of the `.SVD` file format. It is NOT affiliated with,
+   authorized, sponsored, endorsed, or approved by Roland Corporation. "Roland"
+   and "SH-4d" are registered trademarks of Roland Corporation.
+
+2. PROVIDED "AS IS" WITHOUT WARRANTY:
+   THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY
+   KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, ACCURACY, SAFETY, AND
+   NONINFRINGEMENT.
+
+3. ASSUMPTION OF RISK & COMPLETE LIMITATION OF LIABILITY:
+   YOU EXPRESSLY UNDERSTAND AND AGREE THAT YOUR USE OF THIS SOFTWARE IS AT YOUR
+   SOLE AND EXCLUSIVE RISK. EDITING BINARY BACKUP FILES (`.SVD`) AND RESTORING
+   THEM TO HARDWARE SYNTHESIZERS MAY RESULT IN DATA CORRUPTION, LOSS OF PATCHES
+   OR PATTERNS, UNEXPECTED DEVICE BEHAVIOR, FIRMWARE INSTABILITY, OR HARDWARE
+   MALFUNCTION.
+
+   IN NO EVENT SHALL THE AUTHORS, COPYRIGHT HOLDERS, OR CONTRIBUTORS BE LIABLE
+   FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+   TORT, STRICT LIABILITY, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE—INCLUDING,
+   WITHOUT LIMITATION, ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+   CONSEQUENTIAL DAMAGES, DAMAGE TO ANY HARDWARE DEVICE OR SYNTHESIZER, REPAIR
+   COSTS, LOSS OF DATA, LOSS OF PROFITS, OR BUSINESS INTERRUPTION, EVEN IF
+   ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+   ALWAYS KEEP AN UNMODIFIED COPY OF YOUR ORIGINAL `SH4d.SVD` BACKUP FILE IN A
+   SAFE LOCATION BEFORE USING THIS SOFTWARE.

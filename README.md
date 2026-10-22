@@ -10,6 +10,12 @@ Built with **pure Python 3** (`tkinter` + `ctypes` WinMM MIDI) — **zero extern
 
 > 📖 **[Read the Complete User Manual (`USER_MANUAL.md`)](USER_MANUAL.md)** for step-by-step instructions on Backing Up / Restoring `SH4d.SVD`, Real-Time MIDI Control, Sound Editing, and Pattern / Part / Step / Multi-Step Copy & Paste.
 
+> [!CAUTION]
+> **⚠️ IMPORTANT DISCLAIMER OF WARRANTY & LIMITATION OF LIABILITY (USE AT YOUR OWN RISK)**
+> 1. **Unofficial Reverse-Engineered Tool:** This software is an independent, unofficial, experimental tool created via reverse-engineering and is **NOT affiliated with, endorsed, authorized, or supported by Roland Corporation**. *"Roland"* and *"SH-4d"* are registered trademarks of Roland Corporation.
+> 2. **Use Entirely at Your Own Risk:** Modifying binary synthesizer backup files (`.SVD`) and restoring them to hardware carries inherent risks, including potential data corruption, loss of patches/patterns, unexpected device behavior, firmware instability, or hardware malfunction. **Always keep a separate, unmodified backup copy of your original `SH4d.SVD` file in a safe folder before using this software.**
+> 3. **No Warranty & Zero Liability:** This software is provided **"AS IS"**, without warranty of any kind, express or implied. **In no event shall the author(s), copyright holders, or contributors be held liable for any claim, damages, or other liability**—including, without limitation, any hardware damage, bricked or malfunctioning devices, repair/service costs, or loss of data/music—arising out of or in connection with the use of this software. See [`LICENSE`](LICENSE) for full legal terms.
+
 ---
 
 ## ✨ Features
@@ -91,5 +97,10 @@ python sh4d_svd_editor.py path/to/SH4d.SVD --summary
 
 ---
 
-## 📄 License
-MIT License
+## ⚠️ Legal Disclaimer, Limitation of Liability & License
+
+**THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.**
+
+By downloading, running, or using this software, you expressly acknowledge and agree that **you do so entirely at your own sole risk**. In no event shall the author (`antmen71`) or any contributors be liable for any direct, indirect, incidental, special, exemplary, or consequential damages (including, but not limited to, damage to your Roland SH-4d or any connected hardware, firmware corruption, repair costs, or loss of patches, patterns, or data) arising in any way out of the use of this software.
+
+Released under the **[MIT License with Explicit Hardware/Data Limitation of Liability (`LICENSE`)](LICENSE)**.

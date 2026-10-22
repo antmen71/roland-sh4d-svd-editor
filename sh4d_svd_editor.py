@@ -2,8 +2,16 @@
 # -*- coding: utf-8 -*-
 """
 Roland SH-4d .SVD Backup / Patch / Pattern / Rhythm Kit Editor & Librarian
-Workspace: dawless_project
 Supports Roland SVD5 (JP-M) binary database files (e.g. SH4d.SVD).
+
+DISCLAIMER OF WARRANTY & LIMITATION OF LIABILITY (USE AT YOUR OWN RISK):
+This software is an independent, unofficial reverse-engineered tool and is NOT
+affiliated with, endorsed, or supported by Roland Corporation.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES, OR OTHER LIABILITY—INCLUDING ANY HARDWARE DAMAGE, FIRMWARE
+MALFUNCTION, REPAIR COSTS, OR LOSS OF DATA—ARISING FROM THE USE OF THIS SOFTWARE.
+Always keep a separate, unmodified backup copy of your original SH4d.SVD file.
 """
 
 import os

@@ -2,6 +2,12 @@
 
 Welcome to the official user manual for the **Roland SH-4d `.SVD` Editor, Librarian & Real-Time MIDI Synth Controller**. This application provides a complete desktop workflow for managing your Roland SH-4d synthesizer—combining an **offline `.SVD` backup editor, patch/pattern librarian, and 64-step sequencer inspector** with a **real-time Windows MIDI CC & Program Change synth controller**.
 
+> [!CAUTION]
+> **⚠️ DISCLAIMER OF WARRANTY & LIMITATION OF LIABILITY (USE AT YOUR OWN RISK)**
+> * **Unofficial Tool:** This application is an independent, unofficial community tool created via reverse-engineering and is **NOT affiliated with, endorsed, or supported by Roland Corporation**.
+> * **No Warranty & Zero Liability:** This software is provided **"AS IS"**, without warranty of any kind. By using this software, you agree that **you do so entirely at your own risk**. In no event shall the author(s) or contributors be held liable for any direct, indirect, incidental, or consequential damages—including hardware damage, bricked or malfunctioning synthesizers, repair costs, or loss of data/patches/patterns—arising from the use of this software.
+> * **Always Backup First:** Always keep a separate, unmodified copy of your original `SH4d.SVD` file in a safe folder on your computer before restoring any edited file to your Roland SH-4d.
+
 ---
 
 ## 📑 Table of Contents
