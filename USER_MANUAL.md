@@ -62,7 +62,7 @@ To edit your patterns, patches, and rhythm kits offline in `.SVD` format and loa
 2. Connect your computer to the SH-4d’s USB port via USB cable.
 3. While holding down the [START] button, turn the power on.
 4. Open the “SH-4D” drive on your computer.
-5. Copy the saved `SH4d.SVD` file back into the `ROLAND/BACKUP/` folder on the SH-4d USB storage drive.
+5. Copy the saved `SH4d.SVD` file back into the `ROLAND/RESTORE/` folder on the SH-4d USB storage drive.
 6. Once copying is finished, eject the USB drive from your computer, and press the [ENTER] button.
 7. Once the message “Completed. Turn the power off.” appears on the screen, turn this unit off
 
