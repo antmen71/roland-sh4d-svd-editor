@@ -204,6 +204,57 @@ class SH4dSVD:
         27: "27: STEP / HARMONIC",
     }
 
+    OSC_WAVEFORMS = {
+        0: "0: OFF",
+        1: "1: SAW",
+        2: "2: SQR",
+        3: "3: TRI",
+        4: "4: SINE",
+        5: "5: RAMP",
+        6: "6: JUNO",
+        7: "7: TRI2",
+        8: "8: TRI3",
+        9: "9: SINE2",
+        10: "10: SuperSAW",
+        11: "11: NOISE",
+    }
+
+    MATRIX_SOURCES = {
+        0: "0: LFO",
+        52: "52: Pitch Env",
+        94: "94: Pitch Bend",
+        95: "95: Aftertouch",
+        96: "96: Mod Wheel (CC#1)",
+        98: "98: Velocity / Key",
+        100: "100: Filter Env",
+        102: "102: OFF",
+    }
+
+    MATRIX_DESTS = {
+        0: "0: OFF",
+        3: "3: Pitch",
+        4: "4: OSC 2 Pitch",
+        6: "6: Filter Cutoff",
+        7: "7: Filter Reso",
+        9: "9: Filter Env Depth",
+        12: "12: LFO Rate",
+        14: "14: LFO Pitch Depth",
+        15: "15: LFO Filter Depth",
+        16: "16: LFO Amp Depth",
+        17: "17: OSC 1 PW",
+        18: "18: OSC 2 PW",
+        19: "19: OSC 3 PW",
+        24: "24: OSC 4 PW",
+        25: "25: Wave Position",
+        28: "28: Pan",
+        33: "33: Level",
+        35: "35: OSC 1 Level",
+        38: "38: OSC 2 Level",
+        45: "45: Filter Drive",
+        50: "50: Sub Level",
+        54: "54: MFX Control",
+    }
+
     def get_patch_offset(self, idx: int) -> int:
         sec = self.sections["PATc"]
         return sec["data_offset"] + idx * sec["item_size"]
@@ -222,6 +273,24 @@ class SH4dSVD:
         osc_model = self.data[off + 0x08]
         patch_level = self.data[off + 0x24]
         mfx_type = self.data[off + 0x50]
+        mfx_sw = self.data[off + 0x51]
+        mfx_cho = self.data[off + 0x52]
+        mfx_rev = self.data[off + 0x53]
+        mfx_params = [
+            struct.unpack("<h", self.data[off + 0x60 + i * 2 : off + 0x62 + i * 2])[0]
+            for i in range(16)
+        ]
+
+        # Voicing / Tone settings ([SHIFT]+[6] TONE)
+        category = self.data[off + 0x20]
+        coarse_tune = s8(self.data[off + 0x29])
+        analog_feel = self.data[off + 0x2D]
+        mono_poly = self.data[off + 0x2E]
+        legato_sw = self.data[off + 0x31]
+        porta_sw = self.data[off + 0x32]
+        porta_time = struct.unpack("<H", self.data[off + 0x36 : off + 0x38])[0]
+        bend_up = self.data[off + 0x38]
+        bend_down = self.data[off + 0x39]
 
         slider1 = self.data[off + 0x0D8]
         slider2 = self.data[off + 0x154]
@@ -248,12 +317,59 @@ class SH4dSVD:
         lfo_flt = s8(self.data[off + 0x40C])
         lfo_amp = s8(self.data[off + 0x40D])
 
+        # 4 Oscillators (0x720 + osc * 44)
+        oscs = []
+        for o in range(4):
+            o_base = off + 0x720 + o * 44
+            oscs.append(
+                {
+                    "wave": self.data[o_base + 0],
+                    "coarse": s8(self.data[o_base + 1]),
+                    "fine": s8(self.data[o_base + 2]),
+                    "pw": self.data[o_base + 3],
+                    "pwm": self.data[o_base + 4],
+                    "fat": self.data[o_base + 5],
+                    "pan": self.data[o_base + 6],
+                }
+            )
+
+        # 4 Modulation Matrix Slots (0x6F0 + slot * 12)
+        matrix = []
+        for sl in range(4):
+            m_base = off + 0x6F0 + sl * 12
+            matrix.append(
+                {
+                    "src": self.data[m_base + 0],
+                    "dst1": self.data[m_base + 1],
+                    "dep1": s8(self.data[m_base + 2]),
+                    "dst2": self.data[m_base + 3],
+                    "dep2": s8(self.data[m_base + 4]),
+                    "dst3": self.data[m_base + 5],
+                    "dep3": s8(self.data[m_base + 6]),
+                    "dst4": self.data[m_base + 7],
+                    "dep4": s8(self.data[m_base + 8]),
+                }
+            )
+
         return {
             "name": name,
             "osc_model": osc_model,
             "osc_model_label": self.OSC_MODELS.get(osc_model, f"{osc_model}: Model"),
             "patch_level": patch_level,
             "mfx_type": mfx_type,
+            "mfx_sw": mfx_sw,
+            "mfx_cho": mfx_cho,
+            "mfx_rev": mfx_rev,
+            "mfx_params": mfx_params,
+            "category": category,
+            "coarse_tune": coarse_tune,
+            "analog_feel": analog_feel,
+            "mono_poly": mono_poly,
+            "legato_sw": legato_sw,
+            "porta_sw": porta_sw,
+            "porta_time": porta_time,
+            "bend_up": bend_up,
+            "bend_down": bend_down,
             "slider1": slider1,
             "slider2": slider2,
             "slider3": slider3,
@@ -274,6 +390,8 @@ class SH4dSVD:
             "lfo_pitch": lfo_pitch,
             "lfo_flt": lfo_flt,
             "lfo_amp": lfo_amp,
+            "oscs": oscs,
+            "matrix": matrix,
         }
 
     def set_patch_params(self, idx: int, **kw):
@@ -286,12 +404,89 @@ class SH4dSVD:
             self.data[off + 0x24] = max(0, min(127, int(kw["patch_level"])))
         if "mfx_type" in kw and kw["mfx_type"] is not None:
             self.data[off + 0x50] = max(0, min(127, int(kw["mfx_type"])))
+        if "mfx_sw" in kw and kw["mfx_sw"] is not None:
+            self.data[off + 0x51] = max(0, min(1, int(kw["mfx_sw"])))
+        if "mfx_cho" in kw and kw["mfx_cho"] is not None:
+            self.data[off + 0x52] = max(0, min(127, int(kw["mfx_cho"])))
+        if "mfx_rev" in kw and kw["mfx_rev"] is not None:
+            self.data[off + 0x53] = max(0, min(127, int(kw["mfx_rev"])))
+        if "mfx_params" in kw and kw["mfx_params"] is not None:
+            for i, val in enumerate(kw["mfx_params"][:16]):
+                self.data[off + 0x60 + i * 2 : off + 0x62 + i * 2] = struct.pack(
+                    "<h", max(-32768, min(32767, int(val)))
+                )
+
+        # Voicing / Tone settings ([SHIFT]+[6] TONE)
+        if "category" in kw and kw["category"] is not None:
+            self.data[off + 0x20] = max(0, min(127, int(kw["category"])))
+        if "coarse_tune" in kw and kw["coarse_tune"] is not None:
+            self.data[off + 0x29] = u8_from_s8(max(-48, min(48, int(kw["coarse_tune"]))))
+        if "analog_feel" in kw and kw["analog_feel"] is not None:
+            self.data[off + 0x2D] = max(0, min(127, int(kw["analog_feel"])))
+        if "mono_poly" in kw and kw["mono_poly"] is not None:
+            self.data[off + 0x2E] = max(0, min(1, int(kw["mono_poly"])))
+        if "legato_sw" in kw and kw["legato_sw"] is not None:
+            self.data[off + 0x31] = max(0, min(1, int(kw["legato_sw"])))
+        if "porta_sw" in kw and kw["porta_sw"] is not None:
+            self.data[off + 0x32] = max(0, min(1, int(kw["porta_sw"])))
+        if "porta_time" in kw and kw["porta_time"] is not None:
+            self.data[off + 0x36 : off + 0x38] = struct.pack(
+                "<H", max(0, min(1023, int(kw["porta_time"])))
+            )
+        if "bend_up" in kw and kw["bend_up"] is not None:
+            self.data[off + 0x38] = max(0, min(48, int(kw["bend_up"])))
+        if "bend_down" in kw and kw["bend_down"] is not None:
+            self.data[off + 0x39] = max(0, min(48, int(kw["bend_down"])))
 
         # 4 Oscillator Sliders
         for s_idx, s_off in enumerate([0x0D8, 0x154, 0x1D0, 0x24C], start=1):
             k = f"slider{s_idx}"
             if k in kw and kw[k] is not None:
-                self.data[off + s_off] = max(0, min(127, int(kw[k])))
+                val = max(0, min(127, int(kw[k])))
+                self.data[off + s_off] = val
+                self.data[off + 0x670 + s_idx] = val
+
+        # 4 Oscillators deep parameters (0x720 + o * 44 & partial mirror)
+        if "oscs" in kw and kw["oscs"] is not None:
+            for o, od in enumerate(kw["oscs"][:4]):
+                o_base = off + 0x720 + o * 44
+                p_coarse_off = off + 0x0DA + o * 0x7C
+                if "wave" in od:
+                    self.data[o_base + 0] = max(0, min(255, int(od["wave"])))
+                if "coarse" in od:
+                    c_u8 = u8_from_s8(max(-48, min(48, int(od["coarse"]))))
+                    self.data[o_base + 1] = c_u8
+                    self.data[p_coarse_off] = c_u8
+                if "fine" in od:
+                    f_u8 = u8_from_s8(max(-50, min(50, int(od["fine"]))))
+                    self.data[o_base + 2] = f_u8
+                    self.data[p_coarse_off + 1] = f_u8
+                if "pw" in od:
+                    self.data[o_base + 3] = max(0, min(127, int(od["pw"])))
+                if "pwm" in od:
+                    self.data[o_base + 4] = max(0, min(127, int(od["pwm"])))
+                if "fat" in od:
+                    self.data[o_base + 5] = max(0, min(127, int(od["fat"])))
+                if "pan" in od:
+                    self.data[o_base + 6] = max(0, min(127, int(od["pan"])))
+
+        # 4 Modulation Matrix Slots (0x6F0 + sl * 12 & partial mirror at 0x114 + p*0x7C + sl*12)
+        if "matrix" in kw and kw["matrix"] is not None:
+            for sl, md in enumerate(kw["matrix"][:4]):
+                m_base = off + 0x6F0 + sl * 12
+                if "src" in md:
+                    self.data[m_base + 0] = max(0, min(255, int(md["src"])))
+                for d_i in range(1, 5):
+                    dk = f"dst{d_i}"
+                    pk = f"dep{d_i}"
+                    if dk in md:
+                        self.data[m_base + (d_i - 1) * 2 + 1] = max(0, min(255, int(md[dk])))
+                    if pk in md:
+                        dep_u8 = u8_from_s8(max(-63, min(63, int(md[pk]))))
+                        self.data[m_base + (d_i - 1) * 2 + 2] = dep_u8
+                        for p in range(4):
+                            pm_base = off + 0x114 + p * 0x7C + sl * 12
+                            self.data[pm_base + (d_i - 1) * 2 + 2] = dep_u8
 
         # Filter parameters written across all 4 Partials (stride 0x7C = 124)
         for p in range(4):
@@ -342,6 +537,106 @@ class SH4dSVD:
                 self.data[l_base + 0x14] = u8_from_s8(max(-64, min(63, int(kw["lfo_flt"]))))
             if "lfo_amp" in kw and kw["lfo_amp"] is not None:
                 self.data[l_base + 0x15] = u8_from_s8(max(-64, min(63, int(kw["lfo_amp"]))))
+
+    def get_patch_searchable_list(self, idx: int) -> list:
+        """Returns list of dicts: {key, category, name, offset, value, range} for all patch parameters."""
+        pr = self.get_patch_params(idx)
+        rows = [
+            ("osc_model", "Voicing & Common", "OSC Model ID", "0x008", pr["osc_model"], "16..27"),
+            ("category", "Voicing & Common", "Tone Category ID", "0x020", pr["category"], "0..44"),
+            ("patch_level", "Voicing & Common", "Patch Level", "0x024", pr["patch_level"], "0..127"),
+            ("coarse_tune", "Voicing & Common", "Tone Coarse Tune (Semitones)", "0x029", pr["coarse_tune"], "-48..+48"),
+            ("analog_feel", "Voicing & Common", "Analog Feel", "0x02D", pr["analog_feel"], "0..127"),
+            ("mono_poly", "Voicing & Common", "Mono / Poly Switch (0=MONO, 1=POLY)", "0x02E", pr["mono_poly"], "0..1"),
+            ("legato_sw", "Voicing & Common", "Legato Switch (0=OFF, 1=ON)", "0x031", pr["legato_sw"], "0..1"),
+            ("porta_sw", "Voicing & Common", "Portamento Switch (0=OFF, 1=ON)", "0x032", pr["porta_sw"], "0..1"),
+            ("porta_time", "Voicing & Common", "Portamento Time", "0x036", pr["porta_time"], "0..1023"),
+            ("bend_up", "Voicing & Common", "Pitch Bend Range Up (Semitones)", "0x038", pr["bend_up"], "0..48"),
+            ("bend_down", "Voicing & Common", "Pitch Bend Range Down (Semitones)", "0x039", pr["bend_down"], "0..48"),
+            ("slider1", "OSC 1-4", "OSC 1 Mixer Level (Slider 1)", "0x0D8", pr["slider1"], "0..127"),
+            ("slider2", "OSC 1-4", "OSC 2 Mixer Level (Slider 2)", "0x154", pr["slider2"], "0..127"),
+            ("slider3", "OSC 1-4", "OSC 3 Mixer Level (Slider 3)", "0x1D0", pr["slider3"], "0..127"),
+            ("slider4", "OSC 1-4", "OSC 4 Mixer Level (Slider 4)", "0x24C", pr["slider4"], "0..127"),
+        ]
+        for o in range(4):
+            od = pr["oscs"][o]
+            base_hex = f"0x{0x720 + o * 44:03X}"
+            rows.extend(
+                [
+                    (f"osc{o+1}_wave", "OSC 1-4", f"OSC {o+1} Waveform ID", base_hex, od["wave"], "0..255"),
+                    (f"osc{o+1}_coarse", "OSC 1-4", f"OSC {o+1} Coarse Tune (Semi)", f"0x{0x721 + o * 44:03X}", od["coarse"], "-24..+24"),
+                    (f"osc{o+1}_fine", "OSC 1-4", f"OSC {o+1} Fine Tune (Cents)", f"0x{0x722 + o * 44:03X}", od["fine"], "-50..+50"),
+                    (f"osc{o+1}_pw", "OSC 1-4", f"OSC {o+1} Pulse Width", f"0x{0x723 + o * 44:03X}", od["pw"], "0..63"),
+                    (f"osc{o+1}_pwm", "OSC 1-4", f"OSC {o+1} PWM Depth", f"0x{0x724 + o * 44:03X}", od["pwm"], "0..63"),
+                    (f"osc{o+1}_fat", "OSC 1-4", f"OSC {o+1} Fat / SuperSAW Detune", f"0x{0x725 + o * 44:03X}", od["fat"], "0..127"),
+                    (f"osc{o+1}_pan", "OSC 1-4", f"OSC {o+1} Pan (64=Center)", f"0x{0x726 + o * 44:03X}", od["pan"], "0..127"),
+                ]
+            )
+        rows.extend(
+            [
+                ("cutoff", "Filter & ADSR", "Filter Cutoff", "0x100", pr["cutoff"], "0..1023"),
+                ("resonance", "Filter & ADSR", "Filter Resonance", "0x106", pr["resonance"], "0..1023"),
+                ("flt_env_depth", "Filter & ADSR", "Filter Env Depth", "0x102", pr["flt_env_depth"], "0..255"),
+                ("flt_atk", "Filter & ADSR", "Filter Attack", "0x38C", pr["flt_atk"], "0..1023"),
+                ("flt_dec", "Filter & ADSR", "Filter Decay", "0x38E", pr["flt_dec"], "0..1023"),
+                ("flt_sus", "Filter & ADSR", "Filter Sustain", "0x390", pr["flt_sus"], "0..1023"),
+                ("flt_rel", "Filter & ADSR", "Filter Release", "0x392", pr["flt_rel"], "0..1023"),
+                ("amp_atk", "Filter & ADSR", "Amp Attack", "0x328", pr["amp_atk"], "0..1023"),
+                ("amp_dec", "Filter & ADSR", "Amp Decay", "0x332", pr["amp_dec"], "0..1023"),
+                ("amp_sus", "Filter & ADSR", "Amp Sustain", "0x334", pr["amp_sus"], "0..1023"),
+                ("amp_rel", "Filter & ADSR", "Amp Release", "0x33C", pr["amp_rel"], "0..1023"),
+                ("lfo_shape", "LFO", "LFO Waveform Shape", "0x3FC", pr["lfo_shape"], "0..9"),
+                ("lfo_rate", "LFO", "LFO Rate", "0x400", pr["lfo_rate"], "0..1023"),
+                ("lfo_pitch", "LFO", "LFO Pitch Depth", "0x40B", pr["lfo_pitch"], "-63..+63"),
+                ("lfo_flt", "LFO", "LFO Filter Depth", "0x40C", pr["lfo_flt"], "-63..+63"),
+                ("lfo_amp", "LFO", "LFO Amp Depth", "0x40D", pr["lfo_amp"], "-63..+63"),
+            ]
+        )
+        for sl in range(4):
+            md = pr["matrix"][sl]
+            b = 0x6F0 + sl * 12
+            rows.append((f"mtx{sl+1}_src", "Matrix", f"Matrix Slot {sl+1} Source ID", f"0x{b:03X}", md["src"], "0..127"))
+            for d_i in range(1, 5):
+                rows.append(
+                    (
+                        f"mtx{sl+1}_dst{d_i}",
+                        "Matrix",
+                        f"Matrix Slot {sl+1} Dest {d_i} ID",
+                        f"0x{b + (d_i-1)*2 + 1:03X}",
+                        md[f"dst{d_i}"],
+                        "0..63",
+                    )
+                )
+                rows.append(
+                    (
+                        f"mtx{sl+1}_dep{d_i}",
+                        "Matrix",
+                        f"Matrix Slot {sl+1} Depth {d_i}",
+                        f"0x{b + (d_i-1)*2 + 2:03X}",
+                        md[f"dep{d_i}"],
+                        "-63..+63",
+                    )
+                )
+        rows.extend(
+            [
+                ("mfx_type", "MFX", "Tone MFX Type ID", "0x050", pr["mfx_type"], "0..93"),
+                ("mfx_sw", "MFX", "Tone MFX Switch (0=OFF, 1=ON)", "0x051", pr["mfx_sw"], "0..1"),
+                ("mfx_cho", "MFX", "Tone MFX Chorus Send", "0x052", pr["mfx_cho"], "0..127"),
+                ("mfx_rev", "MFX", "Tone MFX Reverb Send", "0x053", pr["mfx_rev"], "0..127"),
+            ]
+        )
+        for i in range(16):
+            rows.append(
+                (
+                    f"mfx_p{i+1}",
+                    "MFX",
+                    f"MFX Internal Param {i+1:02d}",
+                    f"0x{0x060 + i*2:03X}",
+                    pr["mfx_params"][i],
+                    "-32768..32767",
+                )
+            )
+        return rows
 
     def get_patch_bytes(self, idx: int) -> bytes:
         off = self.get_patch_offset(idx)
@@ -1139,9 +1434,9 @@ class SH4dEditorApp(tk.Tk):
         sb_x.grid(row=1, column=0, sticky="ew")
         self.tree_patch.bind("<<TreeviewSelect>>", self.on_select_patch)
 
-        right = ttk.LabelFrame(pw, text="Synth Patch Sound & Parameter Editor", padding=8)
-        pw.add(left, minsize=300, width=760, stretch="always")
-        pw.add(right, minsize=320, width=420, stretch="never")
+        right = ttk.LabelFrame(pw, text="Synth Patch Sound, Matrix & Deep Parameter Editor", padding=6)
+        pw.add(left, minsize=280, width=640, stretch="always")
+        pw.add(right, minsize=460, width=560, stretch="always")
 
         self.var_patch_name = tk.StringVar()
         self.var_p_osc = tk.StringVar()
@@ -1168,87 +1463,288 @@ class SH4dEditorApp(tk.Tk):
         self.var_p_lflt = tk.StringVar()
         self.var_p_lamp = tk.StringVar()
 
-        # General & Oscillator Model
+        # Always-visible Patch Header (Name & OSC Model)
         g_frm = ttk.Frame(right)
-        g_frm.pack(fill=tk.X, pady=2)
-        ttk.Label(g_frm, text="Patch Name:", width=14).grid(row=0, column=0, sticky=tk.W, pady=2)
-        ttk.Entry(g_frm, textvariable=self.var_patch_name, width=20).grid(row=0, column=1, columnspan=3, sticky=tk.W, pady=2)
-
-        ttk.Label(g_frm, text="OSC Model ID:", width=14).grid(row=1, column=0, sticky=tk.W, pady=2)
+        g_frm.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(g_frm, text="Patch Name:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        ttk.Entry(g_frm, textvariable=self.var_patch_name, width=16).pack(side=tk.LEFT, padx=(4, 10))
+        ttk.Label(g_frm, text="OSC Model:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
         self.cb_osc_model = ttk.Combobox(
             g_frm,
             textvariable=self.var_p_osc,
             values=[f"{k}: {v.split(': ')[1]}" for k, v in SH4dSVD.OSC_MODELS.items()],
             width=18,
         )
-        self.cb_osc_model.grid(row=1, column=1, columnspan=3, sticky=tk.W, pady=2)
+        self.cb_osc_model.pack(side=tk.LEFT, padx=4)
 
-        ttk.Label(g_frm, text="Patch Lvl (0-127):").grid(row=2, column=0, sticky=tk.W, pady=2)
-        ttk.Entry(g_frm, textvariable=self.var_p_lvl, width=6).grid(row=2, column=1, sticky=tk.W, pady=2)
-        ttk.Label(g_frm, text="MFX Type (0-93):").grid(row=2, column=2, sticky=tk.W, padx=(8, 2), pady=2)
-        ttk.Entry(g_frm, textvariable=self.var_p_mfx, width=6).grid(row=2, column=3, sticky=tk.W, pady=2)
+        # Sub-Notebook with 5 clean tabs inside the Right Panel
+        self.nb_patch_sub = ttk.Notebook(right)
+        self.nb_patch_sub.pack(fill=tk.BOTH, expand=True, pady=2)
 
-        ttk.Separator(right, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+        # --- SUB-TAB 1: MAIN (FILTER / ADSR / LFO) ---
+        st_main = ttk.Frame(self.nb_patch_sub, padding=6)
+        self.nb_patch_sub.add(st_main, text="🎛️ 1. Main")
 
-        # OSC Sliders 1-4
-        ttk.Label(right, text="OSC Mixer Sliders 1–4 (0..127):", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
-        s_frm = ttk.Frame(right)
+        m_top = ttk.Frame(st_main)
+        m_top.pack(fill=tk.X, pady=2)
+        ttk.Label(m_top, text="Patch Level (0-127):").pack(side=tk.LEFT)
+        ttk.Entry(m_top, textvariable=self.var_p_lvl, width=6).pack(side=tk.LEFT, padx=(4, 12))
+        ttk.Label(m_top, text="MFX Type (0-93):").pack(side=tk.LEFT)
+        ttk.Entry(m_top, textvariable=self.var_p_mfx, width=6).pack(side=tk.LEFT, padx=4)
+
+        ttk.Separator(st_main, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=4)
+        ttk.Label(st_main, text="OSC Mixer Sliders 1–4 (0..127):", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
+        s_frm = ttk.Frame(st_main)
         s_frm.pack(fill=tk.X, pady=2)
         for i, var in enumerate([self.var_p_s1, self.var_p_s2, self.var_p_s3, self.var_p_s4], start=1):
-            ttk.Label(s_frm, text=f"S{i}:").pack(side=tk.LEFT, padx=(4 if i > 1 else 0, 2))
+            ttk.Label(s_frm, text=f"S{i}:").pack(side=tk.LEFT, padx=(6 if i > 1 else 0, 2))
             ttk.Entry(s_frm, textvariable=var, width=5).pack(side=tk.LEFT)
 
-        ttk.Separator(right, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
-
-        # Filter & Filter ADSR
-        ttk.Label(right, text="Filter & Filter ADSR (0..1023):", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
-        f_frm = ttk.Frame(right)
+        ttk.Separator(st_main, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=4)
+        ttk.Label(st_main, text="Filter & Filter ADSR (0..1023):", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
+        f_frm = ttk.Frame(st_main)
         f_frm.pack(fill=tk.X, pady=2)
-        ttk.Label(f_frm, text="Cutoff (0-1023):").grid(row=0, column=0, sticky=tk.W, pady=2)
-        ttk.Entry(f_frm, textvariable=self.var_p_cutoff, width=6).grid(row=0, column=1, sticky=tk.W, padx=2)
-        ttk.Label(f_frm, text="Reso (0-1023):").grid(row=0, column=2, sticky=tk.W, padx=(6, 0), pady=2)
-        ttk.Entry(f_frm, textvariable=self.var_p_reso, width=6).grid(row=0, column=3, sticky=tk.W, padx=2)
-        ttk.Label(f_frm, text="Env Depth:").grid(row=1, column=0, sticky=tk.W, pady=2)
-        ttk.Entry(f_frm, textvariable=self.var_p_fenv, width=6).grid(row=1, column=1, sticky=tk.W, padx=2)
+        ttk.Label(f_frm, text="Cutoff:").pack(side=tk.LEFT)
+        ttk.Entry(f_frm, textvariable=self.var_p_cutoff, width=6).pack(side=tk.LEFT, padx=(2, 8))
+        ttk.Label(f_frm, text="Reso:").pack(side=tk.LEFT)
+        ttk.Entry(f_frm, textvariable=self.var_p_reso, width=6).pack(side=tk.LEFT, padx=(2, 8))
+        ttk.Label(f_frm, text="Env Dep:").pack(side=tk.LEFT)
+        ttk.Entry(f_frm, textvariable=self.var_p_fenv, width=6).pack(side=tk.LEFT, padx=2)
 
-        fadsr = ttk.Frame(right)
+        fadsr = ttk.Frame(st_main)
         fadsr.pack(fill=tk.X, pady=2)
         for lbl, var in [("F-Atk", self.var_p_fatk), ("F-Dec", self.var_p_fdec), ("F-Sus", self.var_p_fsus), ("F-Rel", self.var_p_frel)]:
             ttk.Label(fadsr, text=f"{lbl}:").pack(side=tk.LEFT, padx=(3, 1))
             ttk.Entry(fadsr, textvariable=var, width=5).pack(side=tk.LEFT)
 
-        ttk.Separator(right, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
-
-        # Amp ADSR
-        ttk.Label(right, text="Amp Envelope ADSR (0..1023):", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
-        aadsr = ttk.Frame(right)
+        ttk.Separator(st_main, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=4)
+        ttk.Label(st_main, text="Amp Envelope ADSR (0..1023):", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
+        aadsr = ttk.Frame(st_main)
         aadsr.pack(fill=tk.X, pady=2)
         for lbl, var in [("A-Atk", self.var_p_aatk), ("A-Dec", self.var_p_adec), ("A-Sus", self.var_p_asus), ("A-Rel", self.var_p_arel)]:
             ttk.Label(aadsr, text=f"{lbl}:").pack(side=tk.LEFT, padx=(3, 1))
             ttk.Entry(aadsr, textvariable=var, width=5).pack(side=tk.LEFT)
 
-        ttk.Separator(right, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
-
-        # LFO Section
-        ttk.Label(right, text="LFO Rate & Modulation Depths:", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
-        lfo_frm = ttk.Frame(right)
+        ttk.Separator(st_main, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=4)
+        ttk.Label(st_main, text="LFO Rate & Modulation Depths:", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
+        lfo_frm = ttk.Frame(st_main)
         lfo_frm.pack(fill=tk.X, pady=2)
-        ttk.Label(lfo_frm, text="Shape (0-5):").grid(row=0, column=0, sticky=tk.W, pady=2)
-        ttk.Entry(lfo_frm, textvariable=self.var_p_lshape, width=5).grid(row=0, column=1, sticky=tk.W, padx=2)
-        ttk.Label(lfo_frm, text="Rate (0-1023):").grid(row=0, column=2, sticky=tk.W, padx=(6, 0), pady=2)
-        ttk.Entry(lfo_frm, textvariable=self.var_p_lrate, width=6).grid(row=0, column=3, sticky=tk.W, padx=2)
+        ttk.Label(lfo_frm, text="Shape (0-9):").pack(side=tk.LEFT)
+        ttk.Entry(lfo_frm, textvariable=self.var_p_lshape, width=5).pack(side=tk.LEFT, padx=(2, 10))
+        ttk.Label(lfo_frm, text="Rate (0-1023):").pack(side=tk.LEFT)
+        ttk.Entry(lfo_frm, textvariable=self.var_p_lrate, width=6).pack(side=tk.LEFT, padx=2)
 
-        lfo_d = ttk.Frame(right)
+        lfo_d = ttk.Frame(st_main)
         lfo_d.pack(fill=tk.X, pady=2)
         for lbl, var in [("Pitch Dep", self.var_p_lpitch), ("Filter Dep", self.var_p_lflt), ("Amp Dep", self.var_p_lamp)]:
             ttk.Label(lfo_d, text=f"{lbl}:").pack(side=tk.LEFT, padx=(3, 1))
             ttk.Entry(lfo_d, textvariable=var, width=5).pack(side=tk.LEFT)
 
-        ttk.Button(right, text="✅ Apply All Sound Parameters to .SVD Patch", command=self.on_rename_patch).pack(fill=tk.X, pady=4)
-        ttk.Button(right, text="⚡ Load This Patch on SH-4d Live (MIDI PC)", command=self.on_live_load_selected_patch).pack(fill=tk.X, pady=2)
-        ttk.Button(right, text="⚡ Push Patch Parameters to SH-4d Live (MIDI CC)", command=self.on_live_push_patch_ccs).pack(fill=tk.X, pady=2)
+        # --- SUB-TAB 2: OSC 1-4 & VOICING ([SHIFT]+[6] TONE) ---
+        st_osc = ttk.Frame(self.nb_patch_sub, padding=6)
+        self.nb_patch_sub.add(st_osc, text="🌊 2. OSC 1-4 & Voicing")
 
-        ttk.Separator(right, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=4)
+        v_lf = ttk.LabelFrame(st_osc, text="Tone Voicing & Portamento ([SHIFT]+[6] TONE)", padding=5)
+        v_lf.pack(fill=tk.X, pady=(0, 6))
+
+        self.var_p_cat = tk.StringVar()
+        self.var_p_coarse = tk.StringVar()
+        self.var_p_afeel = tk.StringVar()
+        self.var_p_monopoly = tk.StringVar()
+        self.var_p_legato = tk.StringVar()
+        self.var_p_portasw = tk.StringVar()
+        self.var_p_portatime = tk.StringVar()
+        self.var_p_bendup = tk.StringVar()
+        self.var_p_benddn = tk.StringVar()
+
+        vr1 = ttk.Frame(v_lf)
+        vr1.pack(fill=tk.X, pady=2)
+        ttk.Label(vr1, text="Mono/Poly (0/1):").pack(side=tk.LEFT)
+        ttk.Entry(vr1, textvariable=self.var_p_monopoly, width=4).pack(side=tk.LEFT, padx=(2, 8))
+        ttk.Label(vr1, text="Legato (0/1):").pack(side=tk.LEFT)
+        ttk.Entry(vr1, textvariable=self.var_p_legato, width=4).pack(side=tk.LEFT, padx=(2, 8))
+        ttk.Label(vr1, text="Analog Feel (0-127):").pack(side=tk.LEFT)
+        ttk.Entry(vr1, textvariable=self.var_p_afeel, width=5).pack(side=tk.LEFT, padx=2)
+
+        vr2 = ttk.Frame(v_lf)
+        vr2.pack(fill=tk.X, pady=2)
+        ttk.Label(vr2, text="Porta Sw (0/1):").pack(side=tk.LEFT)
+        ttk.Entry(vr2, textvariable=self.var_p_portasw, width=4).pack(side=tk.LEFT, padx=(2, 8))
+        ttk.Label(vr2, text="Porta Time (0-1023):").pack(side=tk.LEFT)
+        ttk.Entry(vr2, textvariable=self.var_p_portatime, width=6).pack(side=tk.LEFT, padx=(2, 8))
+        ttk.Label(vr2, text="Category (0-44):").pack(side=tk.LEFT)
+        ttk.Entry(vr2, textvariable=self.var_p_cat, width=4).pack(side=tk.LEFT, padx=2)
+
+        vr3 = ttk.Frame(v_lf)
+        vr3.pack(fill=tk.X, pady=2)
+        ttk.Label(vr3, text="Coarse (-48..48):").pack(side=tk.LEFT)
+        ttk.Entry(vr3, textvariable=self.var_p_coarse, width=5).pack(side=tk.LEFT, padx=(2, 8))
+        ttk.Label(vr3, text="Bend Up (0-48):").pack(side=tk.LEFT)
+        ttk.Entry(vr3, textvariable=self.var_p_bendup, width=4).pack(side=tk.LEFT, padx=(2, 8))
+        ttk.Label(vr3, text="Bend Dn (0-48):").pack(side=tk.LEFT)
+        ttk.Entry(vr3, textvariable=self.var_p_benddn, width=4).pack(side=tk.LEFT, padx=2)
+
+        o_lf = ttk.LabelFrame(st_osc, text="Individual Oscillators 1–4 (0x720..0x7CF)", padding=5)
+        o_lf.pack(fill=tk.BOTH, expand=True)
+
+        headers_o = ["OSC", "Wave ID", "Coarse", "Fine", "PW", "PWM", "Fat/Det", "Pan"]
+        for col_i, h_txt in enumerate(headers_o):
+            ttk.Label(o_lf, text=h_txt, font=("Segoe UI", 8, "bold")).grid(row=0, column=col_i, padx=3, pady=2)
+
+        self.osc_deep_vars = []
+        for o_i in range(4):
+            ttk.Label(o_lf, text=f"OSC {o_i+1}:", font=("Segoe UI", 8, "bold")).grid(row=o_i + 1, column=0, padx=3, pady=3, sticky=tk.W)
+            vw = tk.StringVar()
+            vc = tk.StringVar()
+            vf = tk.StringVar()
+            vpw = tk.StringVar()
+            vpwm = tk.StringVar()
+            vfat = tk.StringVar()
+            vpan = tk.StringVar()
+            for col_i, v in enumerate([vw, vc, vf, vpw, vpwm, vfat, vpan], start=1):
+                ttk.Entry(o_lf, textvariable=v, width=6).grid(row=o_i + 1, column=col_i, padx=2, pady=3)
+            self.osc_deep_vars.append((vw, vc, vf, vpw, vpwm, vfat, vpan))
+
+        ttk.Label(
+            o_lf,
+            text="Wave IDs: 1=SAW, 2=SQR, 3=TRI, 4=SINE, 5=RAMP, 6=JUNO, 7=TRI2, 10=SuperSAW, 11=NOISE",
+            font=("Segoe UI", 7),
+        ).grid(row=6, column=0, columnspan=8, sticky=tk.W, pady=(6, 0))
+
+        # --- SUB-TAB 3: MODULATION MATRIX (4 SLOTS) ---
+        st_mtx = ttk.Frame(self.nb_patch_sub, padding=6)
+        self.nb_patch_sub.add(st_mtx, text="🕸️ 3. Matrix")
+
+        ttk.Label(
+            st_mtx,
+            text="4-Slot Modulation Matrix ([SHIFT]+[7] MATRIX — 1 Source -> 4 Destinations & Depths -63..+63):",
+            font=("Segoe UI", 8, "bold"),
+        ).pack(anchor=tk.W, pady=(0, 4))
+
+        self.mtx_vars = []
+        for sl in range(4):
+            slf = ttk.LabelFrame(st_mtx, text=f"Matrix Slot {sl+1} (0x{0x6F0 + sl*12:03X})", padding=4)
+            slf.pack(fill=tk.X, pady=2)
+            v_src = tk.StringVar()
+            row_top = ttk.Frame(slf)
+            row_top.pack(fill=tk.X)
+            ttk.Label(row_top, text="Source ID:").pack(side=tk.LEFT)
+            ttk.Entry(row_top, textvariable=v_src, width=5).pack(side=tk.LEFT, padx=(2, 6))
+            ttk.Label(
+                row_top,
+                text="(0=LFO, 52=PEnv, 94=Bend, 95=Aft, 96=ModWhl, 98=Vel, 100=FEnv, 102=OFF)",
+                font=("Segoe UI", 7),
+            ).pack(side=tk.LEFT)
+
+            row_d = ttk.Frame(slf)
+            row_d.pack(fill=tk.X, pady=(2, 0))
+            dst_dep_pairs = []
+            for d_i in range(1, 5):
+                vd = tk.StringVar()
+                vp = tk.StringVar()
+                ttk.Label(row_d, text=f"D{d_i}:").pack(side=tk.LEFT, padx=(4 if d_i > 1 else 0, 1))
+                ttk.Entry(row_d, textvariable=vd, width=4).pack(side=tk.LEFT)
+                ttk.Label(row_d, text="Dep:").pack(side=tk.LEFT, padx=(2, 1))
+                ttk.Entry(row_d, textvariable=vp, width=4).pack(side=tk.LEFT)
+                dst_dep_pairs.append((vd, vp))
+            self.mtx_vars.append((v_src, dst_dep_pairs))
+
+        ttk.Label(
+            st_mtx,
+            text="Common Dest IDs: 0=OFF, 3=Pitch, 4=OSC2 Pitch, 6=Cutoff, 7=Reso, 12=LFO Rate, 17..19=OSC1..3 PW, 28=Pan",
+            font=("Segoe UI", 7),
+        ).pack(anchor=tk.W, pady=(2, 0))
+
+        # --- SUB-TAB 4: MFX PARAMETERS ---
+        st_mfx = ttk.Frame(self.nb_patch_sub, padding=6)
+        self.nb_patch_sub.add(st_mfx, text="✨ 4. MFX")
+
+        mfx_top = ttk.LabelFrame(st_mfx, text="Tone MFX Common (0x050..0x053)", padding=5)
+        mfx_top.pack(fill=tk.X, pady=(0, 4))
+        self.var_p_mfx_sw = tk.StringVar()
+        self.var_p_mfx_cho = tk.StringVar()
+        self.var_p_mfx_rev = tk.StringVar()
+
+        ttk.Label(mfx_top, text="MFX Type (0-93):").grid(row=0, column=0, sticky=tk.W, padx=2, pady=2)
+        ttk.Entry(mfx_top, textvariable=self.var_p_mfx, width=6).grid(row=0, column=1, padx=4, pady=2)
+        ttk.Label(mfx_top, text="Switch (0/1):").grid(row=0, column=2, sticky=tk.W, padx=6, pady=2)
+        ttk.Entry(mfx_top, textvariable=self.var_p_mfx_sw, width=5).grid(row=0, column=3, padx=4, pady=2)
+        ttk.Label(mfx_top, text="Chorus Send:").grid(row=1, column=0, sticky=tk.W, padx=2, pady=2)
+        ttk.Entry(mfx_top, textvariable=self.var_p_mfx_cho, width=6).grid(row=1, column=1, padx=4, pady=2)
+        ttk.Label(mfx_top, text="Reverb Send:").grid(row=1, column=2, sticky=tk.W, padx=6, pady=2)
+        ttk.Entry(mfx_top, textvariable=self.var_p_mfx_rev, width=5).grid(row=1, column=3, padx=4, pady=2)
+
+        mfx_p_lf = ttk.LabelFrame(st_mfx, text="MFX Algorithm Internal Parameters 1–16 (0x060..0x07F)", padding=5)
+        mfx_p_lf.pack(fill=tk.BOTH, expand=True)
+        self.mfx_param_vars = []
+        for i in range(16):
+            r_i = i // 4
+            c_i = (i % 4) * 2
+            v_mp = tk.StringVar()
+            ttk.Label(mfx_p_lf, text=f"P{i+1:02d}:").grid(row=r_i, column=c_i, sticky=tk.E, padx=(6, 2), pady=3)
+            ttk.Entry(mfx_p_lf, textvariable=v_mp, width=6).grid(row=r_i, column=c_i + 1, sticky=tk.W, padx=2, pady=3)
+            self.mfx_param_vars.append(v_mp)
+
+        # --- SUB-TAB 5: SEARCHABLE ALL PARAMETERS TABLE ---
+        st_search = ttk.Frame(self.nb_patch_sub, padding=6)
+        self.nb_patch_sub.add(st_search, text="🔍 5. Search All")
+
+        s_bar = ttk.Frame(st_search)
+        s_bar.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(s_bar, text="🔍 Search:").pack(side=tk.LEFT)
+        self.var_param_search = tk.StringVar()
+        self.var_param_search.trace_add("write", lambda *_: self.refresh_patch_search_table())
+        ttk.Entry(s_bar, textvariable=self.var_param_search, width=18).pack(side=tk.LEFT, padx=4)
+
+        ttk.Label(s_bar, text="Category:").pack(side=tk.LEFT, padx=(6, 2))
+        self.var_param_cat_filter = tk.StringVar(value="All")
+        cb_cat = ttk.Combobox(
+            s_bar,
+            textvariable=self.var_param_cat_filter,
+            values=["All", "Voicing & Common", "OSC 1-4", "Filter & ADSR", "LFO", "Matrix", "MFX"],
+            state="readonly",
+            width=15,
+        )
+        cb_cat.pack(side=tk.LEFT)
+        cb_cat.bind("<<ComboboxSelected>>", lambda _e: self.refresh_patch_search_table())
+
+        tbl_f = ttk.Frame(st_search)
+        tbl_f.pack(fill=tk.BOTH, expand=True)
+        p_cols = ("cat", "name", "off", "val", "rng")
+        self.tree_param_search = ttk.Treeview(tbl_f, columns=p_cols, show="headings", selectmode="browse", height=8)
+        for c, (t, w) in [
+            ("cat", ("Category", 95)),
+            ("name", ("Parameter Name", 185)),
+            ("off", ("Offset", 50)),
+            ("val", ("Value", 55)),
+            ("rng", ("Range", 70)),
+        ]:
+            self.tree_param_search.heading(c, text=t)
+            self.tree_param_search.column(c, width=w, minwidth=35, anchor=tk.W if c in ("cat", "name") else tk.CENTER)
+        sb_ps = ttk.Scrollbar(tbl_f, orient=tk.VERTICAL, command=self.tree_param_search.yview)
+        self.tree_param_search.configure(yscrollcommand=sb_ps.set)
+        self.tree_param_search.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb_ps.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree_param_search.bind("<<TreeviewSelect>>", self.on_select_search_param)
+
+        edit_bar = ttk.Frame(st_search, padding=(0, 4, 0, 0))
+        edit_bar.pack(fill=tk.X)
+        self.lbl_search_sel = ttk.Label(edit_bar, text="Select a parameter:", width=26, font=("Segoe UI", 8, "bold"))
+        self.lbl_search_sel.pack(side=tk.LEFT)
+        self.var_search_edit_val = tk.StringVar()
+        ent_sv = ttk.Entry(edit_bar, textvariable=self.var_search_edit_val, width=8)
+        ent_sv.pack(side=tk.LEFT, padx=4)
+        ent_sv.bind("<Return>", lambda _e: self.on_apply_search_param())
+        ttk.Button(edit_bar, text="✏️ Set Value", command=self.on_apply_search_param).pack(side=tk.LEFT, padx=2)
+
+        # Always-visible Bottom Action Bar
+        ttk.Button(right, text="✅ Apply All Sound, Matrix & MFX Parameters to .SVD Patch", command=self.on_rename_patch).pack(fill=tk.X, pady=(4, 2))
+        live_row = ttk.Frame(right)
+        live_row.pack(fill=tk.X, pady=2)
+        ttk.Button(live_row, text="⚡ Load Patch Live (MIDI PC)", command=self.on_live_load_selected_patch).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
+        ttk.Button(live_row, text="⚡ Push Sliders Live (MIDI CC)", command=self.on_live_push_patch_ccs).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
+
+        ttk.Separator(right, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=3)
         act_frm = ttk.Frame(right)
         act_frm.pack(fill=tk.X)
         ttk.Label(act_frm, text="Target Slot (1..256):").pack(side=tk.LEFT)
@@ -1256,11 +1752,8 @@ class SH4dEditorApp(tk.Tk):
         ttk.Entry(act_frm, textvariable=self.var_patch_target, width=6).pack(side=tk.LEFT, padx=4)
         ttk.Button(act_frm, text="🔀 Swap", command=self.on_swap_patch).pack(side=tk.LEFT, padx=2)
         ttk.Button(act_frm, text="📋 Copy", command=self.on_copy_patch).pack(side=tk.LEFT, padx=2)
-
-        io_frm = ttk.Frame(right)
-        io_frm.pack(fill=tk.X, pady=4)
-        ttk.Button(io_frm, text="📤 Export (.sh4d_patch)", command=self.on_export_patch).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
-        ttk.Button(io_frm, text="📥 Import (.sh4d_patch)", command=self.on_import_patch).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
+        ttk.Button(act_frm, text="📤 Export", command=self.on_export_patch).pack(side=tk.LEFT, padx=2)
+        ttk.Button(act_frm, text="📥 Import", command=self.on_import_patch).pack(side=tk.LEFT, padx=2)
 
     # ---------------- TAB 3: RHYTHM KITS & DRUM PITCH EDITOR ----------------
     def _build_rhythm_tab(self):
@@ -1807,6 +2300,42 @@ class SH4dEditorApp(tk.Tk):
         self.var_p_osc.set(pr["osc_model_label"])
         self.var_p_lvl.set(str(pr["patch_level"]))
         self.var_p_mfx.set(str(pr["mfx_type"]))
+        self.var_p_mfx_sw.set(str(pr["mfx_sw"]))
+        self.var_p_mfx_cho.set(str(pr["mfx_cho"]))
+        self.var_p_mfx_rev.set(str(pr["mfx_rev"]))
+        for i, v_mp in enumerate(self.mfx_param_vars):
+            v_mp.set(str(pr["mfx_params"][i]))
+
+        # Voicing
+        self.var_p_cat.set(str(pr["category"]))
+        self.var_p_coarse.set(str(pr["coarse_tune"]))
+        self.var_p_afeel.set(str(pr["analog_feel"]))
+        self.var_p_monopoly.set(str(pr["mono_poly"]))
+        self.var_p_legato.set(str(pr["legato_sw"]))
+        self.var_p_portasw.set(str(pr["porta_sw"]))
+        self.var_p_portatime.set(str(pr["porta_time"]))
+        self.var_p_bendup.set(str(pr["bend_up"]))
+        self.var_p_benddn.set(str(pr["bend_down"]))
+
+        # OSC 1-4
+        for o_i, (vw, vc, vf, vpw, vpwm, vfat, vpan) in enumerate(self.osc_deep_vars):
+            od = pr["oscs"][o_i]
+            vw.set(str(od["wave"]))
+            vc.set(str(od["coarse"]))
+            vf.set(str(od["fine"]))
+            vpw.set(str(od["pw"]))
+            vpwm.set(str(od["pwm"]))
+            vfat.set(str(od["fat"]))
+            vpan.set(str(od["pan"]))
+
+        # Matrix 1-4
+        for sl, (v_src, dst_dep_pairs) in enumerate(self.mtx_vars):
+            md = pr["matrix"][sl]
+            v_src.set(str(md["src"]))
+            for d_i, (vd, vp) in enumerate(dst_dep_pairs, start=1):
+                vd.set(str(md[f"dst{d_i}"]))
+                vp.set(str(md[f"dep{d_i}"]))
+
         self.var_p_s1.set(str(pr["slider1"]))
         self.var_p_s2.set(str(pr["slider2"]))
         self.var_p_s3.set(str(pr["slider3"]))
@@ -1827,6 +2356,105 @@ class SH4dEditorApp(tk.Tk):
         self.var_p_lpitch.set(str(pr["lfo_pitch"]))
         self.var_p_lflt.set(str(pr["lfo_flt"]))
         self.var_p_lamp.set(str(pr["lfo_amp"]))
+        self.refresh_patch_search_table()
+
+    def refresh_patch_search_table(self):
+        sel = self.tree_patch.selection()
+        if not sel or not self.svd:
+            return
+        idx = int(sel[0])
+        q = self.var_param_search.get().strip().lower()
+        cat_f = self.var_param_cat_filter.get()
+        rows = self.svd.get_patch_searchable_list(idx)
+        prev = self.tree_param_search.selection()
+        self.tree_param_search.delete(*self.tree_param_search.get_children())
+        for key, cat, name, off_hex, val, rng in rows:
+            if cat_f != "All" and cat != cat_f:
+                continue
+            if q and (q not in name.lower() and q not in cat.lower() and q not in off_hex.lower()):
+                continue
+            self.tree_param_search.insert("", tk.END, iid=key, values=(cat, name, off_hex, val, rng))
+        if prev and self.tree_param_search.exists(prev[0]):
+            self.tree_param_search.selection_set(prev[0])
+
+    def on_select_search_param(self, _event=None):
+        sel = self.tree_param_search.selection()
+        if not sel:
+            return
+        key = sel[0]
+        vals = self.tree_param_search.item(key, "values")
+        self.lbl_search_sel.config(text=f"{vals[1]} ({vals[4]}):")
+        self.var_search_edit_val.set(str(vals[3]))
+
+    def on_apply_search_param(self):
+        psel = self.tree_patch.selection()
+        ssel = self.tree_param_search.selection()
+        if not psel or not ssel or not self.svd:
+            return
+        key = ssel[0]
+        new_val = int(self.var_search_edit_val.get())
+        # Map searchable key back to the corresponding GUI variable and apply
+        direct_var_map = {
+            "patch_level": self.var_p_lvl,
+            "mfx_type": self.var_p_mfx,
+            "mfx_sw": self.var_p_mfx_sw,
+            "mfx_cho": self.var_p_mfx_cho,
+            "mfx_rev": self.var_p_mfx_rev,
+            "category": self.var_p_cat,
+            "coarse_tune": self.var_p_coarse,
+            "analog_feel": self.var_p_afeel,
+            "mono_poly": self.var_p_monopoly,
+            "legato_sw": self.var_p_legato,
+            "porta_sw": self.var_p_portasw,
+            "porta_time": self.var_p_portatime,
+            "bend_up": self.var_p_bendup,
+            "bend_down": self.var_p_benddn,
+            "slider1": self.var_p_s1,
+            "slider2": self.var_p_s2,
+            "slider3": self.var_p_s3,
+            "slider4": self.var_p_s4,
+            "cutoff": self.var_p_cutoff,
+            "resonance": self.var_p_reso,
+            "flt_env_depth": self.var_p_fenv,
+            "flt_atk": self.var_p_fatk,
+            "flt_dec": self.var_p_fdec,
+            "flt_sus": self.var_p_fsus,
+            "flt_rel": self.var_p_frel,
+            "amp_atk": self.var_p_aatk,
+            "amp_dec": self.var_p_adec,
+            "amp_sus": self.var_p_asus,
+            "amp_rel": self.var_p_arel,
+            "lfo_shape": self.var_p_lshape,
+            "lfo_rate": self.var_p_lrate,
+            "lfo_pitch": self.var_p_lpitch,
+            "lfo_flt": self.var_p_lflt,
+            "lfo_amp": self.var_p_lamp,
+        }
+        if key == "osc_model":
+            self.var_p_osc.set(str(new_val))
+        elif key in direct_var_map:
+            direct_var_map[key].set(str(new_val))
+        elif key.startswith("osc") and "_" in key:
+            o_idx = int(key[3]) - 1
+            sub = key.split("_", 1)[1]
+            sub_idx = {"wave": 0, "coarse": 1, "fine": 2, "pw": 3, "pwm": 4, "fat": 5, "pan": 6}[sub]
+            self.osc_deep_vars[o_idx][sub_idx].set(str(new_val))
+        elif key.startswith("mtx") and "_" in key:
+            sl_idx = int(key[3]) - 1
+            sub = key.split("_", 1)[1]
+            v_src, pairs = self.mtx_vars[sl_idx]
+            if sub == "src":
+                v_src.set(str(new_val))
+            elif sub.startswith("dst"):
+                d_i = int(sub[3]) - 1
+                pairs[d_i][0].set(str(new_val))
+            elif sub.startswith("dep"):
+                d_i = int(sub[3]) - 1
+                pairs[d_i][1].set(str(new_val))
+        elif key.startswith("mfx_p"):
+            p_i = int(key[5:]) - 1
+            self.mfx_param_vars[p_i].set(str(new_val))
+        self.on_rename_patch()
 
     def on_rename_patch(self):
         sel = self.tree_patch.selection()
@@ -1835,12 +2463,52 @@ class SH4dEditorApp(tk.Tk):
         idx = int(sel[0])
         osc_str = self.var_p_osc.get().split(":")[0].strip()
         osc_id = int(osc_str) if osc_str.isdigit() else None
+
+        oscs_payload = []
+        for vw, vc, vf, vpw, vpwm, vfat, vpan in self.osc_deep_vars:
+            oscs_payload.append(
+                {
+                    "wave": int(vw.get()),
+                    "coarse": int(vc.get()),
+                    "fine": int(vf.get()),
+                    "pw": int(vpw.get()),
+                    "pwm": int(vpwm.get()),
+                    "fat": int(vfat.get()),
+                    "pan": int(vpan.get()),
+                }
+            )
+
+        mtx_payload = []
+        for v_src, pairs in self.mtx_vars:
+            md = {"src": int(v_src.get())}
+            for d_i, (vd, vp) in enumerate(pairs, start=1):
+                md[f"dst{d_i}"] = int(vd.get())
+                md[f"dep{d_i}"] = int(vp.get())
+            mtx_payload.append(md)
+
+        mfx_p_payload = [int(v.get()) for v in self.mfx_param_vars]
+
         self.svd.set_patch_params(
             idx,
             name=self.var_patch_name.get(),
             osc_model=osc_id,
             patch_level=int(self.var_p_lvl.get()),
             mfx_type=int(self.var_p_mfx.get()),
+            mfx_sw=int(self.var_p_mfx_sw.get()),
+            mfx_cho=int(self.var_p_mfx_cho.get()),
+            mfx_rev=int(self.var_p_mfx_rev.get()),
+            mfx_params=mfx_p_payload,
+            category=int(self.var_p_cat.get()),
+            coarse_tune=int(self.var_p_coarse.get()),
+            analog_feel=int(self.var_p_afeel.get()),
+            mono_poly=int(self.var_p_monopoly.get()),
+            legato_sw=int(self.var_p_legato.get()),
+            porta_sw=int(self.var_p_portasw.get()),
+            porta_time=int(self.var_p_portatime.get()),
+            bend_up=int(self.var_p_bendup.get()),
+            bend_down=int(self.var_p_benddn.get()),
+            oscs=oscs_payload,
+            matrix=mtx_payload,
             slider1=int(self.var_p_s1.get()),
             slider2=int(self.var_p_s2.get()),
             slider3=int(self.var_p_s3.get()),
@@ -1864,6 +2532,7 @@ class SH4dEditorApp(tk.Tk):
         )
         self.refresh_patches()
         self.refresh_patterns()
+        self.refresh_patch_search_table()
 
     def on_swap_patch(self):
         sel = self.tree_patch.selection()
