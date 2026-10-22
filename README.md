@@ -4,6 +4,8 @@ An open-source **offline `.SVD` backup editor / patch librarian** and **real-tim
 
 Built with **pure Python 3** (`tkinter` + `ctypes` WinMM MIDI) — **zero external dependencies (`pip install` not required)**.
 
+> 📖 **[Read the Complete User Manual (`USER_MANUAL.md`)](USER_MANUAL.md)** for step-by-step instructions on Backing Up / Restoring `SH4d.SVD`, Real-Time MIDI Control, Sound Editing, and Pattern / Part / Step / Multi-Step Copy & Paste.
+
 ---
 
 ## ✨ Features

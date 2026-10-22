@@ -867,37 +867,43 @@ class SH4dEditorApp(tk.Tk):
 
     # ---------------- TAB 1: PATTERNS ----------------
     def _build_patterns_tab(self):
-        tab = ttk.Frame(self.nb, padding=8)
+        tab = ttk.Frame(self.nb, padding=6)
         self.nb.add(tab, text="🎵 1. User Patterns & Step/Part Copy-Paste (128 Slots - PRFd)")
 
-        left = ttk.Frame(tab)
-        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        pw = tk.PanedWindow(tab, orient=tk.HORIZONTAL, sashwidth=6, sashrelief=tk.RAISED, bg="#b8b8b8")
+        pw.pack(fill=tk.BOTH, expand=True)
+
+        # Left pane: 128 Patterns Table (with Vertical + Horizontal scrollbars)
+        left = ttk.LabelFrame(pw, text="128 User Patterns (Drag Divider to Resize)", padding=4)
+        left.rowconfigure(0, weight=1)
+        left.columnconfigure(0, weight=1)
 
         cols = ("slot", "name", "tempo", "s1", "s2", "s3", "s4", "rhy")
         self.tree_pat = ttk.Treeview(left, columns=cols, show="headings", selectmode="browse")
         headers = {
-            "slot": ("Slot", 50),
-            "name": ("Pattern Name", 115),
-            "tempo": ("BPM", 55),
-            "s1": ("Part 1 (Ch 8)", 120),
-            "s2": ("Part 2 (Ch 9)", 120),
-            "s3": ("Part 3 (Ch 11)", 120),
-            "s4": ("Part 4 (Ch 12)", 120),
-            "rhy": ("Rhythm (Ch 13)", 120),
+            "slot": ("Slot", 46),
+            "name": ("Pattern Name", 105),
+            "tempo": ("BPM", 48),
+            "s1": ("Part 1 (Ch 8)", 110),
+            "s2": ("Part 2 (Ch 9)", 110),
+            "s3": ("Part 3 (Ch 11)", 110),
+            "s4": ("Part 4 (Ch 12)", 110),
+            "rhy": ("Rhythm (Ch 13)", 110),
         }
         for c, (txt, w) in headers.items():
             self.tree_pat.heading(c, text=txt)
-            self.tree_pat.column(c, width=w, anchor=tk.W)
+            self.tree_pat.column(c, width=w, minwidth=40, stretch=True, anchor=tk.W)
 
-        sb = ttk.Scrollbar(left, orient=tk.VERTICAL, command=self.tree_pat.yview)
-        self.tree_pat.configure(yscrollcommand=sb.set)
-        self.tree_pat.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        sb_y = ttk.Scrollbar(left, orient=tk.VERTICAL, command=self.tree_pat.yview)
+        sb_x = ttk.Scrollbar(left, orient=tk.HORIZONTAL, command=self.tree_pat.xview)
+        self.tree_pat.configure(yscrollcommand=sb_y.set, xscrollcommand=sb_x.set)
+        self.tree_pat.grid(row=0, column=0, sticky="nsew")
+        sb_y.grid(row=0, column=1, sticky="ns")
+        sb_x.grid(row=1, column=0, sticky="ew")
         self.tree_pat.bind("<<TreeviewSelect>>", self.on_select_pattern)
 
-        # Middle panel: 64-Step Sequencer Inspector & Manual Copy/Paste (PART / STEP / MULTI-STEP)
-        mid = ttk.LabelFrame(tab, text="Sequencer Inspector & Copy/Paste (PART / STEP / MULTI-STEP)", padding=8)
-        mid.pack(side=tk.LEFT, fill=tk.BOTH, padx=8)
+        # Middle pane: 64-Step Sequencer Inspector & Manual Copy/Paste (PART / STEP / MULTI-STEP)
+        mid = ttk.LabelFrame(pw, text="Sequencer Inspector & Copy/Paste (PART / STEP / MULTI-STEP)", padding=6)
 
         part_bar = ttk.Frame(mid)
         part_bar.pack(fill=tk.X, pady=(0, 4))
@@ -915,12 +921,12 @@ class SH4dEditorApp(tk.Tk):
             textvariable=self.var_seq_part,
             values=self.part_names_list,
             state="readonly",
-            width=16,
+            width=15,
         )
-        cb_seq_part.pack(side=tk.LEFT, padx=4)
+        cb_seq_part.pack(side=tk.LEFT, padx=3)
         cb_seq_part.bind("<<ComboboxSelected>>", self.on_select_seq_part)
 
-        ttk.Label(part_bar, text="Step Len (1-64):").pack(side=tk.LEFT, padx=(6, 2))
+        ttk.Label(part_bar, text="Step Len:").pack(side=tk.LEFT, padx=(4, 2))
         self.var_seq_len = tk.StringVar(value="64")
         ttk.Entry(part_bar, textvariable=self.var_seq_len, width=4).pack(side=tk.LEFT)
         ttk.Button(part_bar, text="Set Len", command=self.on_set_part_step_length).pack(side=tk.LEFT, padx=3)
@@ -929,17 +935,17 @@ class SH4dEditorApp(tk.Tk):
         step_tbl_f = ttk.Frame(mid)
         step_tbl_f.pack(fill=tk.BOTH, expand=True, pady=2)
         s_cols = ("step", "notes", "vel", "gate", "prob")
-        self.tree_steps = ttk.Treeview(step_tbl_f, columns=s_cols, show="headings", selectmode="browse", height=11)
+        self.tree_steps = ttk.Treeview(step_tbl_f, columns=s_cols, show="headings", selectmode="extended", height=9)
         s_headers = {
-            "step": ("Step", 45),
-            "notes": ("Active Notes (up to 8 poly)", 180),
-            "vel": ("Vel", 45),
-            "gate": ("Gate", 45),
-            "prob": ("Prob%", 50),
+            "step": ("Step", 42),
+            "notes": ("Active Notes (up to 8 poly)", 160),
+            "vel": ("Vel", 40),
+            "gate": ("Gate", 40),
+            "prob": ("Prob%", 45),
         }
         for c, (txt, w) in s_headers.items():
             self.tree_steps.heading(c, text=txt)
-            self.tree_steps.column(c, width=w, anchor=tk.W if c == "notes" else tk.CENTER)
+            self.tree_steps.column(c, width=w, minwidth=35, anchor=tk.W if c == "notes" else tk.CENTER)
         sb_s = ttk.Scrollbar(step_tbl_f, orient=tk.VERTICAL, command=self.tree_steps.yview)
         self.tree_steps.configure(yscrollcommand=sb_s.set)
         self.tree_steps.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -947,22 +953,22 @@ class SH4dEditorApp(tk.Tk):
         self.tree_steps.bind("<<TreeviewSelect>>", self.on_select_step_row)
 
         # PART Copy/Paste section (Manual: [SHIFT]+[13] -> PART)
-        part_cp = ttk.LabelFrame(mid, text="1. Copy/Paste PART Sequence ([SHIFT]+[13] -> PART)", padding=6)
-        part_cp.pack(fill=tk.X, pady=4)
+        part_cp = ttk.LabelFrame(mid, text="1. Copy/Paste PART Sequence ([SHIFT]+[13] -> PART)", padding=5)
+        part_cp.pack(fill=tk.X, pady=3)
 
         p_row1 = ttk.Frame(part_cp)
         p_row1.pack(fill=tk.X, pady=2)
-        ttk.Label(p_row1, text="Dest Pattern (1-128):").pack(side=tk.LEFT)
-        self.var_cp_part_dst_pat = tk.StringVar(value="1")
-        ttk.Entry(p_row1, textvariable=self.var_cp_part_dst_pat, width=5).pack(side=tk.LEFT, padx=4)
-        ttk.Label(p_row1, text="Dest Part:").pack(side=tk.LEFT, padx=(4, 2))
+        ttk.Label(p_row1, text="Dest Pat (e.g. 1-16 or 16):").pack(side=tk.LEFT)
+        self.var_cp_part_dst_pat = tk.StringVar(value="1-01")
+        ttk.Entry(p_row1, textvariable=self.var_cp_part_dst_pat, width=6).pack(side=tk.LEFT, padx=3)
+        ttk.Label(p_row1, text="Part:").pack(side=tk.LEFT, padx=(3, 2))
         self.var_cp_part_dst_part = tk.StringVar(value=self.part_names_list[0])
         ttk.Combobox(
             p_row1,
             textvariable=self.var_cp_part_dst_part,
             values=self.part_names_list,
             state="readonly",
-            width=15,
+            width=14,
         ).pack(side=tk.LEFT)
 
         self.var_cp_part_inc_tone = tk.BooleanVar(value=False)
@@ -970,13 +976,13 @@ class SH4dEditorApp(tk.Tk):
             part_cp,
             text="Also copy Part Tone & Mixer (MSB/LSB/PC/Lvl/Pan)",
             variable=self.var_cp_part_inc_tone,
-        ).pack(anchor=tk.W, pady=2)
+        ).pack(anchor=tk.W, pady=1)
         ttk.Button(part_cp, text="📋 Copy Selected Part Sequence -> Dest Pattern/Part", command=self.on_copy_part_content).pack(
             fill=tk.X, pady=2
         )
 
         # STEP & MULTI-STEP Copy/Paste section (Manual: [SHIFT]+[13] -> STEP / MULTI-STEP)
-        step_cp = ttk.LabelFrame(mid, text="2. Copy/Paste STEP or MULTI-STEP ([SHIFT]+[13] -> STEP / MULTI-STEP)", padding=6)
+        step_cp = ttk.LabelFrame(mid, text="2. Copy/Paste STEP or MULTI-STEP ([SHIFT]+[13] -> STEP / MULTI-STEP)", padding=5)
         step_cp.pack(fill=tk.X, pady=2)
 
         s_row1 = ttk.Frame(step_cp)
@@ -990,9 +996,9 @@ class SH4dEditorApp(tk.Tk):
 
         s_row2 = ttk.Frame(step_cp)
         s_row2.pack(fill=tk.X, pady=2)
-        ttk.Label(s_row2, text="Dest Pat (1-128):").pack(side=tk.LEFT)
-        self.var_cp_step_dst_pat = tk.StringVar(value="1")
-        ttk.Entry(s_row2, textvariable=self.var_cp_step_dst_pat, width=4).pack(side=tk.LEFT, padx=2)
+        ttk.Label(s_row2, text="Dest Pat:").pack(side=tk.LEFT)
+        self.var_cp_step_dst_pat = tk.StringVar(value="1-01")
+        ttk.Entry(s_row2, textvariable=self.var_cp_step_dst_pat, width=6).pack(side=tk.LEFT, padx=2)
         ttk.Label(s_row2, text="Part:").pack(side=tk.LEFT, padx=2)
         self.var_cp_step_dst_part = tk.StringVar(value=self.part_names_list[0])
         ttk.Combobox(
@@ -1002,12 +1008,12 @@ class SH4dEditorApp(tk.Tk):
             state="readonly",
             width=12,
         ).pack(side=tk.LEFT, padx=2)
-        ttk.Label(s_row2, text="Dest Step (1-64):").pack(side=tk.LEFT, padx=2)
+        ttk.Label(s_row2, text="Dest Step:").pack(side=tk.LEFT, padx=2)
         self.var_cp_step_dst_step = tk.StringVar(value="5")
         ttk.Entry(s_row2, textvariable=self.var_cp_step_dst_step, width=4).pack(side=tk.LEFT)
 
         s_row3 = ttk.Frame(step_cp)
-        s_row3.pack(fill=tk.X, pady=3)
+        s_row3.pack(fill=tk.X, pady=2)
         ttk.Button(s_row3, text="📋 Paste Step(s)", command=self.on_copy_steps_content).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2)
         )
@@ -1015,25 +1021,24 @@ class SH4dEditorApp(tk.Tk):
             side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0)
         )
 
-        # Right panel: Pattern Editor
-        right = ttk.LabelFrame(tab, text="Selected Pattern & Tone Editor", padding=10)
-        right.pack(side=tk.RIGHT, fill=tk.Y)
+        # Right pane: Pattern Editor
+        right = ttk.LabelFrame(pw, text="Selected Pattern & Tone Editor", padding=8)
 
-        ttk.Label(right, text="Pattern Name (Max 16 Chars):").grid(row=0, column=0, sticky=tk.W, pady=3)
+        ttk.Label(right, text="Pattern Name (Max 16):").grid(row=0, column=0, sticky=tk.W, pady=2)
         self.var_pat_name = tk.StringVar()
-        ttk.Entry(right, textvariable=self.var_pat_name, width=22).grid(row=0, column=1, pady=3)
+        ttk.Entry(right, textvariable=self.var_pat_name, width=18).grid(row=0, column=1, sticky=tk.W, pady=2)
 
-        ttk.Label(right, text="Tempo (BPM):").grid(row=1, column=0, sticky=tk.W, pady=3)
+        ttk.Label(right, text="Tempo (BPM):").grid(row=1, column=0, sticky=tk.W, pady=2)
         self.var_pat_tempo = tk.StringVar()
-        ttk.Entry(right, textvariable=self.var_pat_tempo, width=12).grid(row=1, column=1, sticky=tk.W, pady=3)
+        ttk.Entry(right, textvariable=self.var_pat_tempo, width=10).grid(row=1, column=1, sticky=tk.W, pady=2)
 
-        ttk.Label(right, text="Pattern Level (0-127):").grid(row=2, column=0, sticky=tk.W, pady=3)
+        ttk.Label(right, text="Pattern Level (0-127):").grid(row=2, column=0, sticky=tk.W, pady=2)
         self.var_pat_level = tk.StringVar()
-        ttk.Entry(right, textvariable=self.var_pat_level, width=12).grid(row=2, column=1, sticky=tk.W, pady=3)
+        ttk.Entry(right, textvariable=self.var_pat_level, width=10).grid(row=2, column=1, sticky=tk.W, pady=2)
 
-        ttk.Separator(right, orient=tk.HORIZONTAL).grid(row=3, column=0, columnspan=2, sticky="ew", pady=8)
+        ttk.Separator(right, orient=tk.HORIZONTAL).grid(row=3, column=0, columnspan=2, sticky="ew", pady=6)
         ttk.Label(right, text="Part Sound & Mixer (MSB / LSB / PC / Lvl / Pan):", font=("Segoe UI", 9, "bold")).grid(
-            row=4, column=0, columnspan=2, sticky=tk.W, pady=4
+            row=4, column=0, columnspan=2, sticky=tk.W, pady=3
         )
 
         self.part_vars = []
@@ -1041,39 +1046,47 @@ class SH4dEditorApp(tk.Tk):
         for p in range(5):
             frm = ttk.Frame(right)
             frm.grid(row=5 + p, column=0, columnspan=2, sticky=tk.W, pady=2)
-            ttk.Label(frm, text=f"{part_labels[p]}:", width=13).pack(side=tk.LEFT)
+            ttk.Label(frm, text=f"{part_labels[p]}:", width=12).pack(side=tk.LEFT)
             v_msb = tk.StringVar()
             v_lsb = tk.StringVar()
             v_pc = tk.StringVar()
             v_lvl = tk.StringVar()
             v_pan = tk.StringVar()
             for lbl, var, w in [("MSB", v_msb, 4), ("LSB", v_lsb, 4), ("PC", v_pc, 4), ("Lvl", v_lvl, 4), ("Pan", v_pan, 4)]:
-                ttk.Label(frm, text=lbl).pack(side=tk.LEFT, padx=(3, 1))
+                ttk.Label(frm, text=lbl).pack(side=tk.LEFT, padx=(2, 1))
                 ttk.Entry(frm, textvariable=var, width=w).pack(side=tk.LEFT)
             self.part_vars.append((v_msb, v_lsb, v_pc, v_lvl, v_pan))
 
         ttk.Button(right, text="✅ Apply Pattern Changes", command=self.on_apply_pattern).grid(
-            row=11, column=0, columnspan=2, sticky="ew", pady=10
+            row=11, column=0, columnspan=2, sticky="ew", pady=8
         )
 
         ttk.Separator(right, orient=tk.HORIZONTAL).grid(row=12, column=0, columnspan=2, sticky="ew", pady=6)
-        ttk.Label(right, text="Target Pattern Slot (1..128):").grid(row=13, column=0, sticky=tk.W, pady=3)
-        self.var_pat_target = tk.StringVar(value="1")
-        ttk.Entry(right, textvariable=self.var_pat_target, width=8).grid(row=13, column=1, sticky=tk.W, pady=3)
-        ttk.Button(right, text="🔀 Swap with Target Slot", command=self.on_swap_pattern).grid(
+        ttk.Label(right, text="Target Pattern (e.g. 1-16 or 16):").grid(row=13, column=0, sticky=tk.W, pady=2)
+        self.var_pat_target = tk.StringVar(value="1-01")
+        ttk.Entry(right, textvariable=self.var_pat_target, width=8).grid(row=13, column=1, sticky=tk.W, pady=2)
+        ttk.Button(right, text="🔀 Swap Entire Pattern with Target", command=self.on_swap_pattern).grid(
             row=14, column=0, columnspan=2, sticky="ew", pady=2
         )
-        ttk.Button(right, text="📋 Copy to Target Slot", command=self.on_copy_pattern).grid(
+        ttk.Button(right, text="📋 Copy Entire Pattern to Target", command=self.on_copy_pattern).grid(
             row=15, column=0, columnspan=2, sticky="ew", pady=2
         )
 
+        pw.add(left, minsize=220, width=430, stretch="always")
+        pw.add(mid, minsize=300, width=430, stretch="always")
+        pw.add(right, minsize=290, width=370, stretch="never")
+
     # ---------------- TAB 2: SYNTH PATCHES ----------------
     def _build_patches_tab(self):
-        tab = ttk.Frame(self.nb, padding=8)
+        tab = ttk.Frame(self.nb, padding=6)
         self.nb.add(tab, text="🎹 2. User Synth Patches & Sound Editor (256 Slots - PATc)")
 
-        left = ttk.Frame(tab)
-        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        pw = tk.PanedWindow(tab, orient=tk.HORIZONTAL, sashwidth=6, sashrelief=tk.RAISED, bg="#b8b8b8")
+        pw.pack(fill=tk.BOTH, expand=True)
+
+        left = ttk.LabelFrame(pw, text="256 User Synth Patches (Drag Divider to Resize)", padding=4)
+        left.rowconfigure(0, weight=1)
+        left.columnconfigure(0, weight=1)
 
         cols = ("idx", "slot", "name", "osc_model", "lvl", "cutoff", "reso", "sliders")
         self.tree_patch = ttk.Treeview(left, columns=cols, show="headings", selectmode="browse")
@@ -1089,16 +1102,19 @@ class SH4dEditorApp(tk.Tk):
         }
         for c, (txt, w) in p_headers.items():
             self.tree_patch.heading(c, text=txt)
-            self.tree_patch.column(c, width=w, anchor=tk.W if c in ("slot", "name", "osc_model") else tk.CENTER)
+            self.tree_patch.column(c, width=w, minwidth=40, anchor=tk.W if c in ("slot", "name", "osc_model") else tk.CENTER)
 
         sb = ttk.Scrollbar(left, orient=tk.VERTICAL, command=self.tree_patch.yview)
-        self.tree_patch.configure(yscrollcommand=sb.set)
-        self.tree_patch.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        sb_x = ttk.Scrollbar(left, orient=tk.HORIZONTAL, command=self.tree_patch.xview)
+        self.tree_patch.configure(yscrollcommand=sb.set, xscrollcommand=sb_x.set)
+        self.tree_patch.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
+        sb_x.grid(row=1, column=0, sticky="ew")
         self.tree_patch.bind("<<TreeviewSelect>>", self.on_select_patch)
 
-        right = ttk.LabelFrame(tab, text="Synth Patch Sound & Parameter Editor", padding=10)
-        right.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
+        right = ttk.LabelFrame(pw, text="Synth Patch Sound & Parameter Editor", padding=8)
+        pw.add(left, minsize=300, width=760, stretch="always")
+        pw.add(right, minsize=320, width=420, stretch="never")
 
         self.var_patch_name = tk.StringVar()
         self.var_p_osc = tk.StringVar()
@@ -1221,18 +1237,20 @@ class SH4dEditorApp(tk.Tk):
 
     # ---------------- TAB 3: RHYTHM KITS & DRUM PITCH EDITOR ----------------
     def _build_rhythm_tab(self):
-        tab = ttk.Frame(self.nb, padding=8)
+        tab = ttk.Frame(self.nb, padding=6)
         self.nb.add(tab, text="🥁 3. Rhythm Kits & Drum Pitch/Filter Editor (RHYa + RHIa)")
 
+        pw = tk.PanedWindow(tab, orient=tk.HORIZONTAL, sashwidth=6, sashrelief=tk.RAISED, bg="#b8b8b8")
+        pw.pack(fill=tk.BOTH, expand=True)
+
         # Left: 64 Rhythm Kits
-        kit_frame = ttk.LabelFrame(tab, text="64 User Rhythm Kits (MSB=86, LSB=0)", padding=6)
-        kit_frame.pack(side=tk.LEFT, fill=tk.Y)
+        kit_frame = ttk.LabelFrame(pw, text="64 User Rhythm Kits (MSB=86, LSB=0)", padding=6)
 
         self.tree_kit = ttk.Treeview(kit_frame, columns=("num", "name", "lvl"), show="headings", selectmode="browse")
         self.tree_kit.heading("num", text="Kit #")
-        self.tree_kit.column("num", width=55)
+        self.tree_kit.column("num", width=50)
         self.tree_kit.heading("name", text="Kit Name")
-        self.tree_kit.column("name", width=135)
+        self.tree_kit.column("name", width=125)
         self.tree_kit.heading("lvl", text="Lvl")
         self.tree_kit.column("lvl", width=45)
         self.tree_kit.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -1251,36 +1269,42 @@ class SH4dEditorApp(tk.Tk):
         )
 
         # Middle: 26 Drum Instruments inside selected Kit
-        mid_frame = ttk.LabelFrame(tab, text="26 Drum Instruments in Selected Kit (MIDI Note 36 C2 .. 61 C#4)", padding=6)
-        mid_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=8)
+        mid_frame = ttk.LabelFrame(pw, text="26 Drum Instruments in Selected Kit (MIDI Note 36 C2 .. 61 C#4)", padding=6)
+        mid_frame.rowconfigure(0, weight=1)
+        mid_frame.columnconfigure(0, weight=1)
 
         d_cols = ("key", "note", "label", "pitch", "level", "pan", "cutoff", "reso", "decay", "wave")
         self.tree_drum = ttk.Treeview(mid_frame, columns=d_cols, show="headings", selectmode="browse")
         d_headers = {
             "key": ("#", 35),
             "note": ("Note", 65),
-            "label": ("Instrument", 145),
-            "pitch": ("Pitch (Semitones)", 105),
-            "level": ("Level", 55),
-            "pan": ("Pan", 55),
-            "cutoff": ("Cutoff (0-1023)", 95),
-            "reso": ("Reso", 55),
-            "decay": ("Decay (0-1023)", 95),
-            "wave": ("Wave ID", 65),
+            "label": ("Instrument", 140),
+            "pitch": ("Pitch (Semitones)", 100),
+            "level": ("Level", 50),
+            "pan": ("Pan", 50),
+            "cutoff": ("Cutoff (0-1023)", 90),
+            "reso": ("Reso", 50),
+            "decay": ("Decay (0-1023)", 90),
+            "wave": ("Wave ID", 60),
         }
         for c, (txt, w) in d_headers.items():
             self.tree_drum.heading(c, text=txt)
-            self.tree_drum.column(c, width=w, anchor=tk.CENTER if c != "label" else tk.W)
+            self.tree_drum.column(c, width=w, minwidth=35, anchor=tk.CENTER if c != "label" else tk.W)
 
         sb_d = ttk.Scrollbar(mid_frame, orient=tk.VERTICAL, command=self.tree_drum.yview)
-        self.tree_drum.configure(yscrollcommand=sb_d.set)
-        self.tree_drum.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb_d.pack(side=tk.RIGHT, fill=tk.Y)
+        sb_dx = ttk.Scrollbar(mid_frame, orient=tk.HORIZONTAL, command=self.tree_drum.xview)
+        self.tree_drum.configure(yscrollcommand=sb_d.set, xscrollcommand=sb_dx.set)
+        self.tree_drum.grid(row=0, column=0, sticky="nsew")
+        sb_d.grid(row=0, column=1, sticky="ns")
+        sb_dx.grid(row=1, column=0, sticky="ew")
         self.tree_drum.bind("<<TreeviewSelect>>", self.on_select_drum_key)
 
         # Right: Selected Drum Instrument Parameter Editor
-        d_edit = ttk.LabelFrame(tab, text="Selected Drum Sound (Pitch / Filter / Mixer)", padding=10)
-        d_edit.pack(side=tk.RIGHT, fill=tk.Y)
+        d_edit = ttk.LabelFrame(pw, text="Selected Drum Sound (Pitch / Filter / Mixer)", padding=8)
+
+        pw.add(kit_frame, minsize=220, width=250, stretch="never")
+        pw.add(mid_frame, minsize=350, width=620, stretch="always")
+        pw.add(d_edit, minsize=280, width=330, stretch="never")
 
         self.lbl_drum_title = ttk.Label(d_edit, text="Select a drum instrument", font=("Segoe UI", 9, "bold"))
         self.lbl_drum_title.grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 8))
@@ -1566,6 +1590,19 @@ class SH4dEditorApp(tk.Tk):
             saved = self.svd.save(out_path=p, make_backup=False)
             messagebox.showinfo("Saved", f"New SVD file saved:\n{saved}")
 
+    def parse_pattern_slot(self, val_str: str) -> int:
+        """Accepts either '1-16' (Bank 1..8 - Num 1..16) or '16' (1..128) and returns 0..127 index."""
+        s = val_str.strip()
+        if "-" in s:
+            parts = s.split("-", 1)
+            if parts[0].strip().isdigit() and parts[1].strip().isdigit():
+                bank = max(1, min(8, int(parts[0].strip())))
+                num = max(1, min(16, int(parts[1].strip())))
+                return (bank - 1) * 16 + (num - 1)
+        if s.isdigit():
+            return max(0, min(127, int(s) - 1))
+        return 0
+
     def on_select_pattern(self, _event):
         sel = self.tree_pat.selection()
         if not sel or not self.svd:
@@ -1582,8 +1619,8 @@ class SH4dEditorApp(tk.Tk):
             v_pc.set(str(p_data["pc"]))
             v_lvl.set(str(p_data["level"]))
             v_pan.set(str(p_data["pan"]))
-        self.var_cp_part_dst_pat.set(str(idx + 1))
-        self.var_cp_step_dst_pat.set(str(idx + 1))
+        self.var_cp_part_dst_pat.set(info["slot"])
+        self.var_cp_step_dst_pat.set(info["slot"])
         self.refresh_steps_for_pattern_part()
 
     def on_select_seq_part(self, _event=None):
@@ -1595,9 +1632,19 @@ class SH4dEditorApp(tk.Tk):
         sel = self.tree_steps.selection()
         if not sel:
             return
-        step_1_64 = int(sel[0]) + 1
-        self.var_cp_step_start.set(str(step_1_64))
-        self.var_cp_step_end.set(str(step_1_64))
+        steps_1_64 = sorted(int(x) + 1 for x in sel)
+        if len(steps_1_64) > 1:
+            self.var_cp_step_start.set(str(steps_1_64[0]))
+            self.var_cp_step_end.set(str(steps_1_64[-1]))
+        else:
+            s_start = steps_1_64[0]
+            self.var_cp_step_start.set(str(s_start))
+            try:
+                cur_end = int(self.var_cp_step_end.get())
+            except ValueError:
+                cur_end = s_start
+            if cur_end < s_start:
+                self.var_cp_step_end.set(str(s_start))
 
     def on_set_part_step_length(self):
         sel = self.tree_pat.selection()
@@ -1614,7 +1661,7 @@ class SH4dEditorApp(tk.Tk):
             return
         src_pat = int(sel[0])
         src_part = self.get_selected_seq_part_idx()
-        dst_pat = max(0, min(127, int(self.var_cp_part_dst_pat.get()) - 1))
+        dst_pat = self.parse_pattern_slot(self.var_cp_part_dst_pat.get())
         raw_dst_p = self.var_cp_part_dst_part.get().split(":")[0].strip()
         dst_part = max(0, min(4, int(raw_dst_p) - 1)) if raw_dst_p.isdigit() else src_part
         inc_tone = bool(self.var_cp_part_inc_tone.get())
@@ -1622,9 +1669,11 @@ class SH4dEditorApp(tk.Tk):
         self.svd.copy_part_content(src_pat, src_part, dst_pat, dst_part, include_tone=inc_tone)
         self.refresh_patterns()
         self.refresh_steps_for_pattern_part()
+        src_slot = f"{(src_pat // 16) + 1}-{(src_pat % 16) + 1:02d}"
+        dst_slot = f"{(dst_pat // 16) + 1}-{(dst_pat % 16) + 1:02d}"
         messagebox.showinfo(
             "Part Copied",
-            f"Copied Pattern #{src_pat+1} Part {src_part+1} -> Pattern #{dst_pat+1} Part {dst_part+1}\n"
+            f"Copied Pattern {src_slot} Part {src_part+1} -> Pattern {dst_slot} Part {dst_part+1}\n"
             f"(Tone/Mixer included: {'Yes' if inc_tone else 'No - Sequence Only'})",
         )
 
@@ -1636,7 +1685,7 @@ class SH4dEditorApp(tk.Tk):
         src_part = self.get_selected_seq_part_idx()
         s_start = int(self.var_cp_step_start.get())
         s_end = int(self.var_cp_step_end.get())
-        dst_pat = max(0, min(127, int(self.var_cp_step_dst_pat.get()) - 1))
+        dst_pat = self.parse_pattern_slot(self.var_cp_step_dst_pat.get())
         raw_dst_p = self.var_cp_step_dst_part.get().split(":")[0].strip()
         dst_part = max(0, min(4, int(raw_dst_p) - 1)) if raw_dst_p.isdigit() else src_part
         dst_step = int(self.var_cp_step_dst_step.get())
@@ -1644,12 +1693,27 @@ class SH4dEditorApp(tk.Tk):
         copied = self.svd.copy_steps_content(
             src_pat, src_part, s_start, s_end, dst_pat, dst_part, dst_step
         )
+        # Auto-expand destination part step length if pasted steps exceed current length
+        end_pasted_step = min(64, dst_step + copied - 1)
+        cur_len = self.svd.get_part_step_length(dst_pat, dst_part)
+        if end_pasted_step > cur_len:
+            self.svd.set_part_step_length(dst_pat, dst_part, end_pasted_step)
+
         self.refresh_steps_for_pattern_part()
+        # Highlight and scroll to the newly pasted steps if viewing the destination pattern/part
+        if dst_pat == src_pat and dst_part == src_part:
+            pasted_iids = [str(s) for s in range(dst_step - 1, end_pasted_step)]
+            if pasted_iids:
+                self.tree_steps.selection_set(pasted_iids)
+                self.tree_steps.see(pasted_iids[0])
+
+        src_slot = f"{(src_pat // 16) + 1}-{(src_pat % 16) + 1:02d}"
+        dst_slot = f"{(dst_pat // 16) + 1}-{(dst_pat % 16) + 1:02d}"
         mode_lbl = "STEP" if copied == 1 else f"MULTI-STEP ({copied} steps)"
         messagebox.showinfo(
             "Steps Copied",
-            f"[{mode_lbl}] Copied Pat #{src_pat+1} Part {src_part+1} Steps {s_start}..{s_start+copied-1}\n"
-            f"-> Pat #{dst_pat+1} Part {dst_part+1} starting at Step {dst_step}.",
+            f"[{mode_lbl}] Copied Pat {src_slot} Part {src_part+1} Steps {s_start}..{s_start+copied-1}\n"
+            f"-> Pat {dst_slot} Part {dst_part+1} Steps {dst_step}..{end_pasted_step}.",
         )
 
     def on_clear_steps_content(self):
@@ -1693,7 +1757,7 @@ class SH4dEditorApp(tk.Tk):
         if not sel or not self.svd:
             return
         idx1 = int(sel[0])
-        idx2 = max(0, min(127, int(self.var_pat_target.get()) - 1))
+        idx2 = self.parse_pattern_slot(self.var_pat_target.get())
         self.svd.swap_patterns(idx1, idx2)
         self.refresh_patterns()
 
@@ -1702,7 +1766,7 @@ class SH4dEditorApp(tk.Tk):
         if not sel or not self.svd:
             return
         idx1 = int(sel[0])
-        idx2 = max(0, min(127, int(self.var_pat_target.get()) - 1))
+        idx2 = self.parse_pattern_slot(self.var_pat_target.get())
         self.svd.copy_pattern(idx1, idx2)
         self.refresh_patterns()
 
