@@ -560,6 +560,120 @@ class SH4dSVD:
         o1, o2 = self.get_pattern_offset(src_idx), self.get_pattern_offset(dst_idx)
         self.data[o2 : o2 + sz] = self.data[o1 : o1 + sz]
 
+    def get_part_step_length(self, pat_idx: int, part_idx: int) -> int:
+        off = self.get_pattern_offset(pat_idx) + 0x08B4 + part_idx * 24
+        return min(64, max(1, self.data[off] + 1))
+
+    def set_part_step_length(self, pat_idx: int, part_idx: int, length_1_64: int):
+        off = self.get_pattern_offset(pat_idx) + 0x08B4 + part_idx * 24
+        self.data[off] = max(0, min(63, int(length_1_64) - 1))
+
+    def get_step_offset(self, pat_idx: int, part_idx: int, step_idx_0_63: int) -> int:
+        return self.get_pattern_offset(pat_idx) + 0x092C + part_idx * 3328 + step_idx_0_63 * 52
+
+    def get_step_info(self, pat_idx: int, part_idx: int, step_idx_0_63: int) -> dict:
+        soff = self.get_step_offset(pat_idx, part_idx, step_idx_0_63)
+        sb = self.data[soff : soff + 52]
+        notes = []
+        gates = []
+        vels = []
+        probs = []
+        for v in range(8):
+            n = sb[v]
+            if n != 0xFF:
+                notes.append(n)
+                gates.append(sb[8 + v])
+                vels.append(sb[16 + v])
+                probs.append(sb[32 + v])
+        note_names = ", ".join(f"{midi_note_name(n)} ({n})" for n in notes) if notes else "—"
+        return {
+            "step": step_idx_0_63 + 1,
+            "notes": notes,
+            "note_names": note_names,
+            "vel": vels[0] if vels else 80,
+            "gate": gates[0] if gates else 80,
+            "prob": probs[0] if probs else 100,
+        }
+
+    def copy_part_content(
+        self,
+        src_pat: int,
+        src_part: int,
+        dst_pat: int,
+        dst_part: int,
+        include_tone: bool = False,
+    ):
+        """
+        Implements SH-4d Manual 'PART' Copy/Paste:
+        Copies the 64-step sequence data (3328 bytes) and 24-byte part sequencer setup.
+        By default (per SH-4d manual), tone numbers are NOT copied unless include_tone=True.
+        """
+        src_p_off = self.get_pattern_offset(src_pat)
+        dst_p_off = self.get_pattern_offset(dst_pat)
+
+        # 1. Copy 64-step sequence block (3328 bytes at 0x092C + part*3328)
+        s_seq = src_p_off + 0x092C + src_part * 3328
+        d_seq = dst_p_off + 0x092C + dst_part * 3328
+        tmp_seq = bytes(self.data[s_seq : s_seq + 3328])
+        self.data[d_seq : d_seq + 3328] = tmp_seq
+
+        # 2. Copy 24-byte Part Sequencer Config (step length, scale, play direction at 0x08B4 + part*24)
+        s_cfg = src_p_off + 0x08B4 + src_part * 24
+        d_cfg = dst_p_off + 0x08B4 + dst_part * 24
+        tmp_cfg = bytes(self.data[s_cfg : s_cfg + 24])
+        self.data[d_cfg : d_cfg + 24] = tmp_cfg
+
+        # 3. Optionally copy Tone / Mixer header (88 bytes at 0x003A + part*88)
+        if include_tone:
+            s_mix = src_p_off + 0x003A + src_part * 88
+            d_mix = dst_p_off + 0x003A + dst_part * 88
+            tmp_mix = bytes(self.data[s_mix : s_mix + 88])
+            self.data[d_mix : d_mix + 88] = tmp_mix
+
+    def copy_steps_content(
+        self,
+        src_pat: int,
+        src_part: int,
+        start_step_1_64: int,
+        end_step_1_64: int,
+        dst_pat: int,
+        dst_part: int,
+        dst_start_step_1_64: int,
+    ) -> int:
+        """
+        Implements SH-4d Manual 'STEP' and 'MULTI-STEP' Copy/Paste.
+        Copies steps [start_step..end_step] (1-indexed, inclusive) to dst_start_step.
+        Returns number of steps copied.
+        """
+        s_start = max(0, min(63, int(start_step_1_64) - 1))
+        s_end = max(s_start, min(63, int(end_step_1_64) - 1))
+        d_start = max(0, min(63, int(dst_start_step_1_64) - 1))
+
+        num_steps = min(s_end - s_start + 1, 64 - d_start)
+        src_off = self.get_step_offset(src_pat, src_part, s_start)
+        dst_off = self.get_step_offset(dst_pat, dst_part, d_start)
+        byte_len = num_steps * 52
+        buf = bytes(self.data[src_off : src_off + byte_len])
+        self.data[dst_off : dst_off + byte_len] = buf
+        return num_steps
+
+    def clear_steps_content(
+        self, pat_idx: int, part_idx: int, start_step_1_64: int, end_step_1_64: int
+    ):
+        """Resets selected steps to clean initialized state."""
+        s_start = max(0, min(63, int(start_step_1_64) - 1))
+        s_end = max(s_start, min(63, int(end_step_1_64) - 1))
+        empty_step = (
+            b"\xff" * 8
+            + b"\x50" * 16
+            + b"\xff" * 8
+            + b"\x64" * 8
+            + b"\x00" * 12
+        )
+        for s in range(s_start, s_end + 1):
+            off = self.get_step_offset(pat_idx, part_idx, s)
+            self.data[off : off + 52] = empty_step
+
     def save(self, out_path: str = None, make_backup: bool = True) -> str:
         target = out_path or self.path
         if make_backup and os.path.exists(target):
@@ -754,7 +868,7 @@ class SH4dEditorApp(tk.Tk):
     # ---------------- TAB 1: PATTERNS ----------------
     def _build_patterns_tab(self):
         tab = ttk.Frame(self.nb, padding=8)
-        self.nb.add(tab, text="🎵 1. User Patterns (128 Slots - PRFd)")
+        self.nb.add(tab, text="🎵 1. User Patterns & Step/Part Copy-Paste (128 Slots - PRFd)")
 
         left = ttk.Frame(tab)
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -762,14 +876,14 @@ class SH4dEditorApp(tk.Tk):
         cols = ("slot", "name", "tempo", "s1", "s2", "s3", "s4", "rhy")
         self.tree_pat = ttk.Treeview(left, columns=cols, show="headings", selectmode="browse")
         headers = {
-            "slot": ("Slot", 55),
-            "name": ("Pattern Name", 130),
-            "tempo": ("BPM", 65),
-            "s1": ("Part 1 (Ch 8)", 145),
-            "s2": ("Part 2 (Ch 9)", 145),
-            "s3": ("Part 3 (Ch 11)", 145),
-            "s4": ("Part 4 (Ch 12)", 145),
-            "rhy": ("Rhythm (Ch 13)", 145),
+            "slot": ("Slot", 50),
+            "name": ("Pattern Name", 115),
+            "tempo": ("BPM", 55),
+            "s1": ("Part 1 (Ch 8)", 120),
+            "s2": ("Part 2 (Ch 9)", 120),
+            "s3": ("Part 3 (Ch 11)", 120),
+            "s4": ("Part 4 (Ch 12)", 120),
+            "rhy": ("Rhythm (Ch 13)", 120),
         }
         for c, (txt, w) in headers.items():
             self.tree_pat.heading(c, text=txt)
@@ -781,9 +895,129 @@ class SH4dEditorApp(tk.Tk):
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree_pat.bind("<<TreeviewSelect>>", self.on_select_pattern)
 
+        # Middle panel: 64-Step Sequencer Inspector & Manual Copy/Paste (PART / STEP / MULTI-STEP)
+        mid = ttk.LabelFrame(tab, text="Sequencer Inspector & Copy/Paste (PART / STEP / MULTI-STEP)", padding=8)
+        mid.pack(side=tk.LEFT, fill=tk.BOTH, padx=8)
+
+        part_bar = ttk.Frame(mid)
+        part_bar.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(part_bar, text="Inspect Part:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        self.part_names_list = [
+            "1: Synth 1 (M08)",
+            "2: Synth 2 (M09)",
+            "3: Synth 3 (M11)",
+            "4: Synth 4 (M12)",
+            "5: Rhythm (M13)",
+        ]
+        self.var_seq_part = tk.StringVar(value=self.part_names_list[0])
+        cb_seq_part = ttk.Combobox(
+            part_bar,
+            textvariable=self.var_seq_part,
+            values=self.part_names_list,
+            state="readonly",
+            width=16,
+        )
+        cb_seq_part.pack(side=tk.LEFT, padx=4)
+        cb_seq_part.bind("<<ComboboxSelected>>", self.on_select_seq_part)
+
+        ttk.Label(part_bar, text="Step Len (1-64):").pack(side=tk.LEFT, padx=(6, 2))
+        self.var_seq_len = tk.StringVar(value="64")
+        ttk.Entry(part_bar, textvariable=self.var_seq_len, width=4).pack(side=tk.LEFT)
+        ttk.Button(part_bar, text="Set Len", command=self.on_set_part_step_length).pack(side=tk.LEFT, padx=3)
+
+        # 64-Step Table
+        step_tbl_f = ttk.Frame(mid)
+        step_tbl_f.pack(fill=tk.BOTH, expand=True, pady=2)
+        s_cols = ("step", "notes", "vel", "gate", "prob")
+        self.tree_steps = ttk.Treeview(step_tbl_f, columns=s_cols, show="headings", selectmode="browse", height=11)
+        s_headers = {
+            "step": ("Step", 45),
+            "notes": ("Active Notes (up to 8 poly)", 180),
+            "vel": ("Vel", 45),
+            "gate": ("Gate", 45),
+            "prob": ("Prob%", 50),
+        }
+        for c, (txt, w) in s_headers.items():
+            self.tree_steps.heading(c, text=txt)
+            self.tree_steps.column(c, width=w, anchor=tk.W if c == "notes" else tk.CENTER)
+        sb_s = ttk.Scrollbar(step_tbl_f, orient=tk.VERTICAL, command=self.tree_steps.yview)
+        self.tree_steps.configure(yscrollcommand=sb_s.set)
+        self.tree_steps.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb_s.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree_steps.bind("<<TreeviewSelect>>", self.on_select_step_row)
+
+        # PART Copy/Paste section (Manual: [SHIFT]+[13] -> PART)
+        part_cp = ttk.LabelFrame(mid, text="1. Copy/Paste PART Sequence ([SHIFT]+[13] -> PART)", padding=6)
+        part_cp.pack(fill=tk.X, pady=4)
+
+        p_row1 = ttk.Frame(part_cp)
+        p_row1.pack(fill=tk.X, pady=2)
+        ttk.Label(p_row1, text="Dest Pattern (1-128):").pack(side=tk.LEFT)
+        self.var_cp_part_dst_pat = tk.StringVar(value="1")
+        ttk.Entry(p_row1, textvariable=self.var_cp_part_dst_pat, width=5).pack(side=tk.LEFT, padx=4)
+        ttk.Label(p_row1, text="Dest Part:").pack(side=tk.LEFT, padx=(4, 2))
+        self.var_cp_part_dst_part = tk.StringVar(value=self.part_names_list[0])
+        ttk.Combobox(
+            p_row1,
+            textvariable=self.var_cp_part_dst_part,
+            values=self.part_names_list,
+            state="readonly",
+            width=15,
+        ).pack(side=tk.LEFT)
+
+        self.var_cp_part_inc_tone = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            part_cp,
+            text="Also copy Part Tone & Mixer (MSB/LSB/PC/Lvl/Pan)",
+            variable=self.var_cp_part_inc_tone,
+        ).pack(anchor=tk.W, pady=2)
+        ttk.Button(part_cp, text="📋 Copy Selected Part Sequence -> Dest Pattern/Part", command=self.on_copy_part_content).pack(
+            fill=tk.X, pady=2
+        )
+
+        # STEP & MULTI-STEP Copy/Paste section (Manual: [SHIFT]+[13] -> STEP / MULTI-STEP)
+        step_cp = ttk.LabelFrame(mid, text="2. Copy/Paste STEP or MULTI-STEP ([SHIFT]+[13] -> STEP / MULTI-STEP)", padding=6)
+        step_cp.pack(fill=tk.X, pady=2)
+
+        s_row1 = ttk.Frame(step_cp)
+        s_row1.pack(fill=tk.X, pady=2)
+        ttk.Label(s_row1, text="Source Steps — Start (1-64):").pack(side=tk.LEFT)
+        self.var_cp_step_start = tk.StringVar(value="1")
+        ttk.Entry(s_row1, textvariable=self.var_cp_step_start, width=4).pack(side=tk.LEFT, padx=3)
+        ttk.Label(s_row1, text="End (1-64):").pack(side=tk.LEFT, padx=(4, 2))
+        self.var_cp_step_end = tk.StringVar(value="4")
+        ttk.Entry(s_row1, textvariable=self.var_cp_step_end, width=4).pack(side=tk.LEFT, padx=3)
+
+        s_row2 = ttk.Frame(step_cp)
+        s_row2.pack(fill=tk.X, pady=2)
+        ttk.Label(s_row2, text="Dest Pat (1-128):").pack(side=tk.LEFT)
+        self.var_cp_step_dst_pat = tk.StringVar(value="1")
+        ttk.Entry(s_row2, textvariable=self.var_cp_step_dst_pat, width=4).pack(side=tk.LEFT, padx=2)
+        ttk.Label(s_row2, text="Part:").pack(side=tk.LEFT, padx=2)
+        self.var_cp_step_dst_part = tk.StringVar(value=self.part_names_list[0])
+        ttk.Combobox(
+            s_row2,
+            textvariable=self.var_cp_step_dst_part,
+            values=self.part_names_list,
+            state="readonly",
+            width=12,
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Label(s_row2, text="Dest Step (1-64):").pack(side=tk.LEFT, padx=2)
+        self.var_cp_step_dst_step = tk.StringVar(value="5")
+        ttk.Entry(s_row2, textvariable=self.var_cp_step_dst_step, width=4).pack(side=tk.LEFT)
+
+        s_row3 = ttk.Frame(step_cp)
+        s_row3.pack(fill=tk.X, pady=3)
+        ttk.Button(s_row3, text="📋 Paste Step(s)", command=self.on_copy_steps_content).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2)
+        )
+        ttk.Button(s_row3, text="🧹 Clear Source Step(s)", command=self.on_clear_steps_content).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0)
+        )
+
         # Right panel: Pattern Editor
-        right = ttk.LabelFrame(tab, text="Selected Pattern Editor", padding=10)
-        right.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
+        right = ttk.LabelFrame(tab, text="Selected Pattern & Tone Editor", padding=10)
+        right.pack(side=tk.RIGHT, fill=tk.Y)
 
         ttk.Label(right, text="Pattern Name (Max 16 Chars):").grid(row=0, column=0, sticky=tk.W, pady=3)
         self.var_pat_name = tk.StringVar()
@@ -1134,6 +1368,42 @@ class SH4dEditorApp(tk.Tk):
             )
         if sel:
             self.tree_pat.selection_set(sel)
+        else:
+            self.tree_pat.selection_set("0")
+            self.on_select_pattern(None)
+
+    def get_selected_seq_part_idx(self) -> int:
+        raw = self.var_seq_part.get().split(":")[0].strip()
+        return max(0, min(4, int(raw) - 1)) if raw.isdigit() else 0
+
+    def refresh_steps_for_pattern_part(self):
+        sel = self.tree_pat.selection()
+        if not sel or not self.svd:
+            return
+        pat_idx = int(sel[0])
+        part_idx = self.get_selected_seq_part_idx()
+        step_len = self.svd.get_part_step_length(pat_idx, part_idx)
+        self.var_seq_len.set(str(step_len))
+
+        prev_sel = self.tree_steps.selection()
+        self.tree_steps.delete(*self.tree_steps.get_children())
+        for s in range(64):
+            st = self.svd.get_step_info(pat_idx, part_idx, s)
+            step_lbl = f"{st['step']:02d}" + (" *" if st["notes"] else "")
+            self.tree_steps.insert(
+                "",
+                tk.END,
+                iid=str(s),
+                values=(
+                    step_lbl,
+                    st["note_names"],
+                    st["vel"] if st["notes"] else "—",
+                    st["gate"] if st["notes"] else "—",
+                    f"{st['prob']}%" if st["notes"] else "—",
+                ),
+            )
+        if prev_sel:
+            self.tree_steps.selection_set(prev_sel)
 
     def refresh_patches(self):
         sel = self.tree_patch.selection()
@@ -1312,6 +1582,86 @@ class SH4dEditorApp(tk.Tk):
             v_pc.set(str(p_data["pc"]))
             v_lvl.set(str(p_data["level"]))
             v_pan.set(str(p_data["pan"]))
+        self.var_cp_part_dst_pat.set(str(idx + 1))
+        self.var_cp_step_dst_pat.set(str(idx + 1))
+        self.refresh_steps_for_pattern_part()
+
+    def on_select_seq_part(self, _event=None):
+        self.var_cp_part_dst_part.set(self.var_seq_part.get())
+        self.var_cp_step_dst_part.set(self.var_seq_part.get())
+        self.refresh_steps_for_pattern_part()
+
+    def on_select_step_row(self, _event=None):
+        sel = self.tree_steps.selection()
+        if not sel:
+            return
+        step_1_64 = int(sel[0]) + 1
+        self.var_cp_step_start.set(str(step_1_64))
+        self.var_cp_step_end.set(str(step_1_64))
+
+    def on_set_part_step_length(self):
+        sel = self.tree_pat.selection()
+        if not sel or not self.svd:
+            return
+        pat_idx = int(sel[0])
+        part_idx = self.get_selected_seq_part_idx()
+        self.svd.set_part_step_length(pat_idx, part_idx, int(self.var_seq_len.get()))
+        self.refresh_steps_for_pattern_part()
+
+    def on_copy_part_content(self):
+        sel = self.tree_pat.selection()
+        if not sel or not self.svd:
+            return
+        src_pat = int(sel[0])
+        src_part = self.get_selected_seq_part_idx()
+        dst_pat = max(0, min(127, int(self.var_cp_part_dst_pat.get()) - 1))
+        raw_dst_p = self.var_cp_part_dst_part.get().split(":")[0].strip()
+        dst_part = max(0, min(4, int(raw_dst_p) - 1)) if raw_dst_p.isdigit() else src_part
+        inc_tone = bool(self.var_cp_part_inc_tone.get())
+
+        self.svd.copy_part_content(src_pat, src_part, dst_pat, dst_part, include_tone=inc_tone)
+        self.refresh_patterns()
+        self.refresh_steps_for_pattern_part()
+        messagebox.showinfo(
+            "Part Copied",
+            f"Copied Pattern #{src_pat+1} Part {src_part+1} -> Pattern #{dst_pat+1} Part {dst_part+1}\n"
+            f"(Tone/Mixer included: {'Yes' if inc_tone else 'No - Sequence Only'})",
+        )
+
+    def on_copy_steps_content(self):
+        sel = self.tree_pat.selection()
+        if not sel or not self.svd:
+            return
+        src_pat = int(sel[0])
+        src_part = self.get_selected_seq_part_idx()
+        s_start = int(self.var_cp_step_start.get())
+        s_end = int(self.var_cp_step_end.get())
+        dst_pat = max(0, min(127, int(self.var_cp_step_dst_pat.get()) - 1))
+        raw_dst_p = self.var_cp_step_dst_part.get().split(":")[0].strip()
+        dst_part = max(0, min(4, int(raw_dst_p) - 1)) if raw_dst_p.isdigit() else src_part
+        dst_step = int(self.var_cp_step_dst_step.get())
+
+        copied = self.svd.copy_steps_content(
+            src_pat, src_part, s_start, s_end, dst_pat, dst_part, dst_step
+        )
+        self.refresh_steps_for_pattern_part()
+        mode_lbl = "STEP" if copied == 1 else f"MULTI-STEP ({copied} steps)"
+        messagebox.showinfo(
+            "Steps Copied",
+            f"[{mode_lbl}] Copied Pat #{src_pat+1} Part {src_part+1} Steps {s_start}..{s_start+copied-1}\n"
+            f"-> Pat #{dst_pat+1} Part {dst_part+1} starting at Step {dst_step}.",
+        )
+
+    def on_clear_steps_content(self):
+        sel = self.tree_pat.selection()
+        if not sel or not self.svd:
+            return
+        src_pat = int(sel[0])
+        src_part = self.get_selected_seq_part_idx()
+        s_start = int(self.var_cp_step_start.get())
+        s_end = int(self.var_cp_step_end.get())
+        self.svd.clear_steps_content(src_pat, src_part, s_start, s_end)
+        self.refresh_steps_for_pattern_part()
 
     def on_apply_pattern(self):
         sel = self.tree_pat.selection()

@@ -23,11 +23,16 @@ Built with **pure Python 3** (`tkinter` + `ctypes` WinMM MIDI) — **zero extern
 * Edit **OSC Mixer Sliders 1–4** (`0–127`), **Filter Cutoff / Resonance / Env Depth** (`0–1023`), **Filter ADSR** (`0–1023`), **Amp ADSR** (`0–1023`), and **LFO Shape / Rate / Depths**.
 * **Swap**, **Copy**, and **Export / Import** individual `.sh4d_patch` files (`2,048 bytes`).
 
-### 3. 🎵 User Patterns Librarian & Mixer (`PRFd` — 128 Slots)
+### 3. 🎵 User Patterns Librarian, 64-Step Sequencer Inspector & Copy/Paste (`PRFd` — 128 Slots)
 * Inspect and edit all **128 User Patterns** (`1-01` to `8-16`, `18,988 bytes` each).
 * Edit **Pattern Name**, **Tempo (`BPM`)**, **Pattern Level**, and **Part 1–5 Sound Assignments (`MSB / LSB / PC`)**, **Part Levels**, and **Part Pan**.
 * Automatically resolves User Synth Patch names (`U01-01`..`U16-16`) and User Rhythm Kit names (`Kit #01`..`Kit #64`) used inside each pattern.
-* **Copy** or **Swap** patterns across any of the 128 slots.
+* **64-Step Sequencer Inspector:** Inspect all 64 steps (`Step 1..64`) for any Part (`Part 1–4` Synth or `Part 5` Rhythm), displaying up to 8 polyphonic MIDI notes per step, Velocity, Gate Time, Probability %, and Part Step Length (`1–64`).
+* **Full Implementation of SH-4d Manual *"Copying and pasting the content of patterns"* (`[SHIFT] + [13] COPY`):**
+  1. **`PATTERN` Mode:** Copy or Swap an entire pattern across any of the 128 slots (`18,988 bytes`).
+  2. **`PART` Mode:** Copy a single Part's 64-step sequence (`3,328 bytes` at `0x092C + part*3328`) and sequencer configuration (`24 bytes` at `0x08B4 + part*24`) to any destination Pattern and Part — either **without overwriting Tone/Mixer** (matching the SH-4d hardware behavior) or **including Tone/Mixer (`88 bytes` at `0x003A + part*88`)** via checkbox.
+  3. **`STEP` Mode:** Copy any single step (`1–64`, `52 bytes`) to any target step in any Pattern/Part.
+  4. **`MULTI-STEP` Mode:** Copy any range of steps (`Start Step .. End Step`) to any destination starting step (`Dest Step`), or clear a range of steps.
 
 ### 4. 🥁 User Rhythm Kits & Per-Drum Pitch/Filter Editor (`RHYa` + `RHIa` — 64 Kits × 26 Drum Keys)
 * Edit all **64 User Rhythm Kits** (`Kit #01` to `Kit #64`).
