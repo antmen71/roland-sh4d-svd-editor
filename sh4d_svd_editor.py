@@ -689,9 +689,14 @@ class SH4dEditorApp(tk.Tk):
     """Desktop GUI for editing Roland SH-4d .SVD files."""
 
     def __init__(self, initial_path: str = None):
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Roland.SH4d.SVDEditor.1.0")
+        except Exception:
+            pass
         super().__init__()
         self.title("Roland SH-4d .SVD Editor & Real-Time MIDI Synth Controller (Dawless Project)")
-        self.geometry("1220x780")
+        self.geometry("1260x800")
+        self._apply_app_icon()
         self.svd: SH4dSVD = None
         self.midi = WinMMMidiOut()
         self.live_cc_vars = {}
@@ -699,6 +704,20 @@ class SH4dEditorApp(tk.Tk):
 
         if initial_path and os.path.exists(initial_path):
             self.load_svd(initial_path)
+
+    def _apply_app_icon(self):
+        base_dirs = []
+        if hasattr(sys, "_MEIPASS"):
+            base_dirs.append(sys._MEIPASS)
+        base_dirs.append(os.path.dirname(os.path.abspath(__file__)))
+        for d in base_dirs:
+            ico = os.path.join(d, "sh4d.ico")
+            if os.path.exists(ico):
+                try:
+                    self.iconbitmap(default=ico)
+                    return
+                except Exception:
+                    pass
 
     def _build_ui(self):
         # Top toolbar

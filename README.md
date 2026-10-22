@@ -1,5 +1,9 @@
 # Roland SH-4d `.SVD` Editor, Librarian & Real-Time MIDI Synth Controller
 
+<p align="center">
+  <img src="sh4d_device.jpg" alt="Roland SH-4d Synthesizer" width="460"/>
+</p>
+
 An open-source **offline `.SVD` backup editor / patch librarian** and **real-time MIDI CC/PC synth controller** for the **Roland SH-4d** synthesizer (`SVD5` / `JP-M` binary database format).
 
 Built with **pure Python 3** (`tkinter` + `ctypes` WinMM MIDI) — **zero external dependencies (`pip install` not required)**.
