@@ -22,10 +22,18 @@ Welcome to the official user manual for the **Roland SH-4d `.SVD` Editor, Librar
 
 ## 1. Overview & System Requirements
 
-* **Zero External Dependencies:** Runs on standard **Python 3.8+** using built-in `tkinter` (GUI) and Windows native `winmm.dll` via `ctypes` (real-time MIDI Out). No `pip install` packages are required.
-* **Safe `.SVD` Editing:** Every time you click **`💾 Save (.bak)`**, the editor automatically creates a timestamped/original `.SVD.bak` backup copy before writing changes, and preserves all untouched engine bytes bit-for-bit.
+* **Standalone Windows App (`SH4d_SVD_Editor.exe`):** Pre-built single-file Windows 10/11 executable available on the [GitHub Releases page](https://github.com/antmen71/roland-sh4d-svd-editor/releases/latest) — **no Python installation required**.
+* **Zero External Dependencies (Python Source):** Can also run directly from source (`sh4d_svd_editor.py`) on standard **Python 3.8+** using built-in `tkinter` (GUI) and Windows native `winmm.dll` via `ctypes` (real-time MIDI Out). No `pip install` packages are required.
+* **Safe `.SVD` Editing:** Every time you click **`💾 Save (.bak)`**, the editor automatically creates a `.SVD.bak` backup copy before writing changes, and preserves all untouched engine bytes bit-for-bit.
 
-### Launching the Application
+### Installation & Launching the Application
+
+#### Option A: Standalone Windows Executable (No Python Needed)
+1. Download **`SH4d_SVD_Editor.exe`** (or **`Roland-SH4d-SVD-Editor-Windows-x64.zip`**) from [GitHub Releases](https://github.com/antmen71/roland-sh4d-svd-editor/releases/latest).
+2. Double-click **`SH4d_SVD_Editor.exe`** to open the program.
+3. Click **`📂 Open .SVD...`** in the top-left toolbar to open your `SH4d.SVD` file.
+
+#### Option B: Running from Python Source
 ```bash
 python sh4d_svd_editor.py path/to/SH4d.SVD
 ```

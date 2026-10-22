@@ -62,15 +62,25 @@ The Roland SH-4d backup file (`SH4d.SVD`, `4,385,916 bytes`) is an **unencrypted
 
 ---
 
-## 🚀 Usage
+## 🚀 Installation & Usage
 
-### Launch GUI Editor
+### Option 1: Standalone Windows Application (Recommended — No Python Required)
+Anyone on Windows 10/11 can download and run the application immediately without installing Python:
+1. Go to the **[GitHub Releases Page](https://github.com/antmen71/roland-sh4d-svd-editor/releases/latest)**.
+2. Download either:
+   * **`SH4d_SVD_Editor.exe`** *(Standalone single-file Windows executable)*, or
+   * **`Roland-SH4d-SVD-Editor-Windows-x64.zip`** *(Complete bundle including `SH4d_SVD_Editor.exe`, `USER_MANUAL.md`, and source script)*.
+3. Double-click **`SH4d_SVD_Editor.exe`** to launch the app, then click **`📂 Open .SVD...`** in the top-left corner to load your `SH4d.SVD` backup file.
+
+### Option 2: Run from Python Source (`Python 3.8+`, Zero `pip` Dependencies)
 ```bash
+git clone https://github.com/antmen71/roland-sh4d-svd-editor.git
+cd roland-sh4d-svd-editor
 python sh4d_svd_editor.py path/to/SH4d.SVD
 ```
-*(On Windows, you can also double-click `run_editor.bat`).*
+*(On Windows with Python installed, you can also double-click `run_editor.bat`).*
 
-### Print Console Summary of an `.SVD` File
+### Print Console Summary of an `.SVD` File (CLI)
 ```bash
 python sh4d_svd_editor.py path/to/SH4d.SVD --summary
 ```
