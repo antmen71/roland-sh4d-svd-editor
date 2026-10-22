@@ -22,6 +22,7 @@ import ctypes
 import argparse
 from datetime import datetime
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
 DEFAULT_SVD_PATH = r"C:\Users\orkun\Downloads\SH4d.SVD"
@@ -1000,13 +1001,80 @@ class SH4dEditorApp(tk.Tk):
         self.title("Roland SH-4d .SVD Editor & Real-Time MIDI Synth Controller (Dawless Project)")
         self.geometry("1260x800")
         self._apply_app_icon()
+        self.font_size = 9
+        self.style = ttk.Style(self)
         self.svd: SH4dSVD = None
         self.midi = WinMMMidiOut()
         self.live_cc_vars = {}
         self._build_ui()
+        self.apply_font_size(self.font_size)
+
+        # Keyboard & MouseWheel shortcuts for resizing fonts (Ctrl + / Ctrl - / Ctrl + MouseWheel)
+        self.bind_all("<Control-plus>", lambda _e: self.change_font_size(1))
+        self.bind_all("<Control-equal>", lambda _e: self.change_font_size(1))
+        self.bind_all("<Control-minus>", lambda _e: self.change_font_size(-1))
+        self.bind_all("<Control-MouseWheel>", self._on_ctrl_mousewheel)
 
         if initial_path and os.path.exists(initial_path):
             self.load_svd(initial_path)
+
+    def _on_ctrl_mousewheel(self, event):
+        if event.delta > 0:
+            self.change_font_size(1)
+        elif event.delta < 0:
+            self.change_font_size(-1)
+
+    def change_font_size(self, delta: int):
+        new_sz = max(6, min(16, self.font_size + delta))
+        if new_sz != self.font_size:
+            self.apply_font_size(new_sz, delta)
+
+    def apply_font_size(self, sz: int, delta: int = 0):
+        self.font_size = sz
+        if hasattr(self, "lbl_font_sz"):
+            self.lbl_font_sz.config(text=f"{sz}pt")
+
+        for fname in (
+            "TkDefaultFont",
+            "TkTextFont",
+            "TkFixedFont",
+            "TkMenuFont",
+            "TkHeadingFont",
+            "TkCaptionFont",
+            "TkSmallCaptionFont",
+            "TkIconFont",
+        ):
+            try:
+                tkfont.nametofont(fname).configure(family="Segoe UI", size=sz)
+            except Exception:
+                pass
+
+        row_h = max(16, int(sz * 2.3))
+        self.style.configure(".", font=("Segoe UI", sz))
+        self.style.configure("TLabel", font=("Segoe UI", sz))
+        self.style.configure("TButton", font=("Segoe UI", sz))
+        self.style.configure("TEntry", font=("Segoe UI", sz))
+        self.style.configure("TCombobox", font=("Segoe UI", sz))
+        self.style.configure("TCheckbutton", font=("Segoe UI", sz))
+        self.style.configure("TLabelframe.Label", font=("Segoe UI", sz, "bold"))
+        self.style.configure("TNotebook.Tab", font=("Segoe UI", sz, "bold"))
+        self.style.configure("Treeview", font=("Segoe UI", sz), rowheight=row_h)
+        self.style.configure("Treeview.Heading", font=("Segoe UI", sz, "bold"))
+
+        if delta != 0:
+            self._scale_widget_fonts(self, sz)
+
+    def _scale_widget_fonts(self, widget, base_sz: int):
+        for child in widget.winfo_children():
+            try:
+                f_str = str(child.cget("font"))
+                if f_str and not f_str.startswith("Tk"):
+                    f_obj = tkfont.Font(root=self, font=child.cget("font"))
+                    weight = f_obj.cget("weight")
+                    child.configure(font=("Segoe UI", base_sz if weight == "bold" else max(6, base_sz - 1), weight))
+            except Exception:
+                pass
+            self._scale_widget_fonts(child, base_sz)
 
     def _apply_app_icon(self):
         base_dirs = []
@@ -1068,6 +1136,13 @@ class SH4dEditorApp(tk.Tk):
         self.cb_midi_ch = ttk.Combobox(top, textvariable=self.var_midi_ch, values=ch_options, width=21, state="readonly")
         self.cb_midi_ch.pack(side=tk.LEFT, padx=2)
         ttk.Button(top, text="🎹 Test Note", command=self.on_test_note).pack(side=tk.LEFT, padx=4)
+
+        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Label(top, text="Font:").pack(side=tk.LEFT, padx=(0, 2))
+        ttk.Button(top, text="A-", width=3, command=lambda: self.change_font_size(-1)).pack(side=tk.LEFT, padx=1)
+        self.lbl_font_sz = ttk.Label(top, text="9pt", width=4, anchor=tk.CENTER, font=("Segoe UI", 8, "bold"))
+        self.lbl_font_sz.pack(side=tk.LEFT, padx=1)
+        ttk.Button(top, text="A+", width=3, command=lambda: self.change_font_size(1)).pack(side=tk.LEFT, padx=1)
 
         self.lbl_status = ttk.Label(top, text="No file loaded", font=("Segoe UI", 8, "bold"))
         self.lbl_status.pack(side=tk.LEFT, padx=8)
