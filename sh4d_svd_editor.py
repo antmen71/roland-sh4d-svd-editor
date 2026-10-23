@@ -1529,6 +1529,327 @@ class SH4dSVD:
         self.generate_part_sequence(pat_idx, 4, r_p5, root_key, scale_name, step_len, density_pct=75)
         return self.get_pattern_info(pat_idx)
 
+    # ---------------- STANDARD MIDI FILE (.MID) PARSER, IMPORTER & EXPORTER ----------------
+    @staticmethod
+    def _read_vlq(buf: bytes, pos: int) -> tuple:
+        val = 0
+        while pos < len(buf):
+            b = buf[pos]
+            pos += 1
+            val = (val << 7) | (b & 0x7F)
+            if not (b & 0x80):
+                break
+        return val, pos
+
+    @staticmethod
+    def _write_vlq(val: int) -> bytes:
+        val = max(0, int(val))
+        out = [val & 0x7F]
+        val >>= 7
+        while val > 0:
+            out.append((val & 0x7F) | 0x80)
+            val >>= 7
+        out.reverse()
+        return bytes(out)
+
+    @classmethod
+    def parse_midi_file(cls, midi_path: str) -> dict:
+        """
+        Pure-Python Standard MIDI File (Format 0 & Format 1) parser.
+        Returns:
+          {
+            "bpm": float,
+            "ppq": int,
+            "total_bars": int,
+            "streams": [
+              {
+                "id": int,
+                "label": str,
+                "track_idx": int,
+                "track_name": str,
+                "channel": int (1..16),
+                "note_count": int,
+                "min_note": int,
+                "max_note": int,
+                "events": [{"step": int, "note": int, "vel": int, "gate": int}, ...],
+              },
+              ...
+            ]
+          }
+        """
+        with open(midi_path, "rb") as f:
+            raw = f.read()
+
+        if len(raw) < 14 or raw[0:4] != b"MThd":
+            raise ValueError("Not a valid Standard MIDI File (missing MThd header).")
+
+        hdr_len = struct.unpack(">I", raw[4:8])[0]
+        _fmt, num_tracks, division = struct.unpack(">HHH", raw[8:14])
+        if division & 0x8000:
+            ppq = 480
+        else:
+            ppq = max(1, division)
+
+        ticks_per_16th = max(1.0, ppq / 4.0)
+        pos = 8 + hdr_len
+        bpm = 120.0
+        tempo_found = False
+        streams = []
+        max_step_seen = 15
+
+        for trk_i in range(num_tracks):
+            while pos + 8 <= len(raw) and raw[pos : pos + 4] != b"MTrk":
+                chunk_len = struct.unpack(">I", raw[pos + 4 : pos + 8])[0]
+                pos += 8 + chunk_len
+            if pos + 8 > len(raw):
+                break
+            trk_len = struct.unpack(">I", raw[pos + 4 : pos + 8])[0]
+            trk_end = min(len(raw), pos + 8 + trk_len)
+            p = pos + 8
+            pos = trk_end
+
+            abs_tick = 0
+            running_status = 0
+            trk_name = f"Track {trk_i + 1}"
+            active_notes = {}  # (ch, note) -> list of (start_tick, vel)
+            ch_events = {}  # ch (1..16) -> list of {"step", "note", "vel", "gate"}
+
+            while p < trk_end:
+                delta, p = cls._read_vlq(raw, p)
+                abs_tick += delta
+                if p >= trk_end:
+                    break
+                status = raw[p]
+                if status < 0x80:
+                    if not running_status:
+                        p += 1
+                        continue
+                    status = running_status
+                else:
+                    p += 1
+                    if status < 0xF0:
+                        running_status = status
+
+                if status == 0xFF:
+                    if p >= trk_end:
+                        break
+                    meta_type = raw[p]
+                    p += 1
+                    m_len, p = cls._read_vlq(raw, p)
+                    m_data = raw[p : p + m_len]
+                    p += m_len
+                    if meta_type == 0x03 and m_data:
+                        try:
+                            dec = m_data.decode("utf-8", errors="ignore").strip()
+                            if dec:
+                                trk_name = dec
+                        except Exception:
+                            pass
+                    elif meta_type == 0x51 and len(m_data) == 3 and not tempo_found:
+                        us_per_q = (m_data[0] << 16) | (m_data[1] << 8) | m_data[2]
+                        if us_per_q > 0:
+                            bpm = round(60000000.0 / us_per_q, 2)
+                            tempo_found = True
+                elif status in (0xF0, 0xF7):
+                    s_len, p = cls._read_vlq(raw, p)
+                    p += s_len
+                elif 0x80 <= status <= 0xEF:
+                    msg_type = status & 0xF0
+                    ch = (status & 0x0F) + 1
+                    if msg_type in (0xC0, 0xD0):
+                        p += 1
+                    else:
+                        if p + 2 > trk_end:
+                            break
+                        d1 = raw[p]
+                        d2 = raw[p + 1]
+                        p += 2
+                        if msg_type == 0x90 and d2 > 0:
+                            active_notes.setdefault((ch, d1), []).append((abs_tick, d2))
+                        elif msg_type == 0x80 or (msg_type == 0x90 and d2 == 0):
+                            stack = active_notes.get((ch, d1))
+                            if stack:
+                                st_tick, vel = stack.pop(0)
+                                dur_ticks = max(1, abs_tick - st_tick)
+                                step_idx = int(round(st_tick / ticks_per_16th))
+                                dur_steps = dur_ticks / ticks_per_16th
+                                gate = max(15, min(127, int(round(dur_steps * 80.0))))
+                                ch_events.setdefault(ch, []).append(
+                                    {"step": step_idx, "note": d1, "vel": max(1, min(127, vel)), "gate": gate}
+                                )
+                                if step_idx > max_step_seen:
+                                    max_step_seen = step_idx
+                else:
+                    p += 1
+
+            # Flush any unclosed notes at track end
+            for (ch, note_num), stack in active_notes.items():
+                for st_tick, vel in stack:
+                    step_idx = int(round(st_tick / ticks_per_16th))
+                    ch_events.setdefault(ch, []).append(
+                        {"step": step_idx, "note": note_num, "vel": max(1, min(127, vel)), "gate": 80}
+                    )
+                    if step_idx > max_step_seen:
+                        max_step_seen = step_idx
+
+            for ch in sorted(ch_events.keys()):
+                ev_list = ch_events[ch]
+                if not ev_list:
+                    continue
+                notes_only = [e["note"] for e in ev_list]
+                min_n, max_n = min(notes_only), max(notes_only)
+                s_id = len(streams)
+                lbl = (
+                    f"#{s_id+1}: Trk {trk_i+1} '{trk_name[:18]}' | Ch {ch:02d} "
+                    f"({len(ev_list)} notes, {midi_note_name(min_n)}..{midi_note_name(max_n)})"
+                )
+                streams.append(
+                    {
+                        "id": s_id,
+                        "label": lbl,
+                        "track_idx": trk_i,
+                        "track_name": trk_name,
+                        "channel": ch,
+                        "note_count": len(ev_list),
+                        "min_note": min_n,
+                        "max_note": max_n,
+                        "events": ev_list,
+                    }
+                )
+
+        total_bars = max(1, (max_step_seen // 16) + 1)
+        return {
+            "bpm": max(20.0, min(300.0, bpm)),
+            "ppq": ppq,
+            "total_bars": total_bars,
+            "streams": streams,
+        }
+
+    def import_midi_stream_to_part(
+        self,
+        pat_idx: int,
+        part_idx: int,
+        events: list,
+        start_bar_1_indexed: int = 1,
+        transpose_semi: int = 0,
+    ) -> int:
+        """
+        Writes a parsed MIDI stream (`events`) into (`pat_idx`, `part_idx`) without remapping raw note numbers.
+        Applies `transpose_semi` (-48..+48) and imports up to 64 steps starting at `start_bar_1_indexed`.
+        Returns the number of imported note triggers.
+        """
+        start_step_offset = max(0, (int(start_bar_1_indexed) - 1) * 16)
+        self.clear_steps_content(pat_idx, part_idx, 1, 64)
+
+        step_buckets = {}  # step_0_63 -> list of (note, vel, gate)
+        max_rel_step = 0
+        imported_count = 0
+
+        for ev in events:
+            rel_step = ev["step"] - start_step_offset
+            if 0 <= rel_step < 64:
+                n_val = max(0, min(127, int(ev["note"]) + int(transpose_semi)))
+                bucket = step_buckets.setdefault(rel_step, [])
+                if not any(x[0] == n_val for x in bucket) and len(bucket) < 8:
+                    bucket.append((n_val, ev["vel"], ev["gate"]))
+                    imported_count += 1
+                    if rel_step > max_rel_step:
+                        max_rel_step = rel_step
+
+        # Determine clean step length (16, 32, 48, or 64)
+        if max_rel_step < 16:
+            slen = 16
+        elif max_rel_step < 32:
+            slen = 32
+        elif max_rel_step < 48:
+            slen = 48
+        else:
+            slen = 64
+        self.set_part_step_length(pat_idx, part_idx, slen)
+
+        for s_idx, bucket in step_buckets.items():
+            # Sort polyphonic notes low-to-high
+            bucket.sort(key=lambda x: x[0])
+            notes = [x[0] for x in bucket]
+            vels = [x[1] for x in bucket]
+            gates = [x[2] for x in bucket]
+            self.set_step_info(
+                pat_idx,
+                part_idx,
+                s_idx,
+                notes,
+                per_note_vels=vels,
+                per_note_gates=gates,
+            )
+        return imported_count
+
+    def export_pattern_to_midi_file(self, pat_idx: int, out_path: str) -> str:
+        """
+        Exports all 5 Parts (Synth 1..4 + Rhythm Part 5) of Pattern `pat_idx` to a Standard MIDI File (.mid Format 1).
+        Uses Dawless setup MIDI channels (Ch 8, 9, 11, 12, 13) and 480 PPQ.
+        """
+        info = self.get_pattern_info(pat_idx)
+        ppq = 480
+        ticks_per_16th = ppq // 4  # 120 ticks per 16th step
+        bpm = max(20.0, min(300.0, float(info["tempo"])))
+        us_per_q = int(round(60000000.0 / bpm))
+
+        # Track 0: Tempo & Pattern Title Meta Track
+        t0 = bytearray()
+        pat_title = f"SH-4d {info['slot']} {info['name']}".encode("ascii", errors="ignore")
+        t0 += b"\x00\xff\x03" + self._write_vlq(len(pat_title)) + pat_title
+        t0 += b"\x00\xff\x51\x03" + struct.pack(">I", us_per_q)[1:4]
+        t0 += b"\x00\xff\x2f\x00"
+
+        tracks_bytes = [bytes(t0)]
+        part_channels = [8, 9, 11, 12, 13]
+        part_labels = ["Synth Part 1", "Synth Part 2", "Synth Part 3", "Synth Part 4", "Rhythm Part 5"]
+
+        for p_i in range(5):
+            ch_0_15 = part_channels[p_i] - 1
+            slen = self.get_part_step_length(pat_idx, p_i)
+            p_meta = info["parts"][p_i]
+            trk_title = f"{part_labels[p_i]} - {p_meta['resolved']}".encode("ascii", errors="ignore")
+
+            midi_evs = []  # (tick, order_priority, bytes)
+            for s in range(slen):
+                st = self.get_step_info(pat_idx, p_i, s)
+                if not st["notes"]:
+                    continue
+                on_tick = s * ticks_per_16th
+                for n_idx, n_val in enumerate(st["notes"]):
+                    vel = st["vels"][n_idx] if n_idx < len(st["vels"]) else 100
+                    gate = st["gates"][n_idx] if n_idx < len(st["gates"]) else 80
+                    dur_ticks = max(15, int(round((gate / 80.0) * ticks_per_16th)))
+                    off_tick = on_tick + dur_ticks
+                    midi_evs.append((on_tick, 1, bytes([0x90 | ch_0_15, n_val & 0x7F, max(1, min(127, vel))])))
+                    midi_evs.append((off_tick, 0, bytes([0x80 | ch_0_15, n_val & 0x7F, 0])))
+
+            midi_evs.sort(key=lambda x: (x[0], x[1]))
+            tb = bytearray()
+            tb += b"\x00\xff\x03" + self._write_vlq(len(trk_title)) + trk_title
+            # Also include Bank Select MSB/LSB & Program Change at tick 0
+            tb += b"\x00" + bytes([0xB0 | ch_0_15, 0, p_meta["msb"] & 0x7F])
+            tb += b"\x00" + bytes([0xB0 | ch_0_15, 32, p_meta["lsb"] & 0x7F])
+            tb += b"\x00" + bytes([0xC0 | ch_0_15, p_meta["pc"] & 0x7F])
+
+            last_tick = 0
+            for abs_t, _prio, msg_b in midi_evs:
+                delta = max(0, abs_t - last_tick)
+                last_tick = abs_t
+                tb += self._write_vlq(delta) + msg_b
+            tb += b"\x00\xff\x2f\x00"
+            tracks_bytes.append(bytes(tb))
+
+        out = bytearray()
+        out += b"MThd" + struct.pack(">IHHH", 6, 1, len(tracks_bytes), ppq)
+        for tb in tracks_bytes:
+            out += b"MTrk" + struct.pack(">I", len(tb)) + tb
+
+        with open(out_path, "wb") as f:
+            f.write(out)
+        return out_path
+
     # ---------------- PRESET GENERATOR, MUTATOR & MATH WAVE / STEP LAB ----------------
     def find_template_patch_idx(self, preferred_model: int = 16) -> int:
         """Finds a valid non-init hardware patch index in PATc to clone base routing tables from."""
@@ -4808,6 +5129,28 @@ class SH4dEditorApp(tk.Tk):
             command=self.on_pc_apply_euclidean,
         ).pack(fill=tk.X, pady=(4, 2))
 
+        # Standard MIDI File (.mid) Import & Export Box
+        g4 = ttk.LabelFrame(left, text="🎼 Standard MIDI File (.mid) Import & Export", padding=6)
+        g4.pack(fill=tk.X, pady=6)
+
+        ttk.Button(
+            g4,
+            text="📥 Import .mid -> Active Part (Single Track/Ch)...",
+            command=self.on_pc_import_midi_single_part,
+        ).pack(fill=tk.X, pady=2)
+
+        ttk.Button(
+            g4,
+            text="🎼 Import Multi-Track .mid -> Pattern (Parts 1–5)...",
+            command=self.on_pc_import_midi_multitrack,
+        ).pack(fill=tk.X, pady=2)
+
+        ttk.Button(
+            g4,
+            text="📤 Export Pattern (All 5 Parts) -> .mid File...",
+            command=self.on_pc_export_pattern_midi,
+        ).pack(fill=tk.X, pady=2)
+
         self.lbl_pc_status = ttk.Label(
             left,
             text="Ready — Select a Pattern & Part to edit or generate.",
@@ -5417,6 +5760,265 @@ class SH4dEditorApp(tk.Tk):
 
         self.pat_play_step = (self.pat_play_step + 1) % 64
         self.pat_play_after_id = self.after(step_ms, self._tick_pc_live_play)
+
+    def on_pc_import_midi_single_part(self):
+        if not self.svd:
+            return
+        m_path = filedialog.askopenfilename(
+            title="Select Standard MIDI File (.mid) to Import into Active Part",
+            filetypes=[("Standard MIDI Files", "*.mid *.midi"), ("All Files", "*.*")],
+        )
+        if not m_path:
+            return
+        try:
+            parsed = SH4dSVD.parse_midi_file(m_path)
+        except Exception as e:
+            messagebox.showerror("MIDI Parse Error", f"Could not read MIDI file:\n{e}")
+            return
+
+        streams = parsed["streams"]
+        if not streams:
+            messagebox.showwarning("Empty MIDI", "No MIDI Note events were found in the selected file.")
+            return
+
+        pat_idx = self._get_pc_pat_idx()
+        part_idx = self._get_pc_part_idx()
+        info = self.svd.get_pattern_info(pat_idx)
+
+        dlg = tk.Toplevel(self)
+        dlg.title(f"Import MIDI -> Pattern {info['slot']} Part {part_idx+1}")
+        dlg.geometry("540x250")
+        dlg.transient(self)
+        dlg.grab_set()
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            frm,
+            text=f"File: {os.path.basename(m_path)}  |  Tempo: {parsed['bpm']:.1f} BPM  |  Total Length: {parsed['total_bars']} bar(s)",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        r_st = ttk.Frame(frm)
+        r_st.pack(fill=tk.X, pady=4)
+        ttk.Label(r_st, text="Select MIDI Track / Channel:").pack(side=tk.LEFT)
+        stream_labels = [s["label"] for s in streams]
+        var_sel_stream = tk.StringVar(value=stream_labels[0])
+        ttk.Combobox(r_st, textvariable=var_sel_stream, values=stream_labels, state="readonly", width=52).pack(side=tk.LEFT, padx=6)
+
+        r_opt = ttk.Frame(frm)
+        r_opt.pack(fill=tk.X, pady=6)
+        ttk.Label(r_opt, text=f"Start Bar (1..{parsed['total_bars']}):").pack(side=tk.LEFT)
+        var_bar = tk.StringVar(value="1")
+        ttk.Spinbox(r_opt, from_=1, to=max(1, parsed["total_bars"]), textvariable=var_bar, width=6).pack(side=tk.LEFT, padx=6)
+
+        ttk.Label(r_opt, text="Transpose (Semitones -24..+24):").pack(side=tk.LEFT, padx=(10, 2))
+        var_tr = tk.StringVar(value="0")
+        ttk.Spinbox(r_opt, from_=-24, to=24, textvariable=var_tr, width=6).pack(side=tk.LEFT, padx=4)
+
+        var_use_bpm = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            frm,
+            text=f"Also update Pattern Tempo to {parsed['bpm']:.1f} BPM",
+            variable=var_use_bpm,
+        ).pack(anchor=tk.W, pady=4)
+
+        def do_import():
+            sel_lbl = var_sel_stream.get()
+            chosen = streams[0]
+            for s in streams:
+                if s["label"] == sel_lbl:
+                    chosen = s
+                    break
+            bar_val = max(1, int(var_bar.get()))
+            tr_val = max(-48, min(48, int(var_tr.get())))
+            count = self.svd.import_midi_stream_to_part(
+                pat_idx, part_idx, chosen["events"], start_bar_1_indexed=bar_val, transpose_semi=tr_val
+            )
+            if var_use_bpm.get():
+                self.svd.set_pattern_info(pat_idx, tempo=parsed["bpm"])
+                self.var_pc_bpm.set(f"{parsed['bpm']:.2f}")
+            self.refresh_patterns()
+            self.on_pc_select_part()
+            self.refresh_steps_for_pattern_part()
+            self.lbl_pc_status.config(
+                text=f"📥 Imported {count} notes from '{chosen['track_name']}' (Ch {chosen['channel']}) into Part {part_idx+1} (raw MIDI notes kept)."
+            )
+            dlg.destroy()
+
+        btn_row = ttk.Frame(frm)
+        btn_row.pack(fill=tk.X, pady=(10, 0))
+        ttk.Button(btn_row, text="✅ Import into Active Part", command=do_import).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
+        ttk.Button(btn_row, text="Cancel", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
+
+    def on_pc_import_midi_multitrack(self):
+        if not self.svd:
+            return
+        m_path = filedialog.askopenfilename(
+            title="Select Multi-Track Standard MIDI File (.mid) to Import into Pattern (Parts 1–5)",
+            filetypes=[("Standard MIDI Files", "*.mid *.midi"), ("All Files", "*.*")],
+        )
+        if not m_path:
+            return
+        try:
+            parsed = SH4dSVD.parse_midi_file(m_path)
+        except Exception as e:
+            messagebox.showerror("MIDI Parse Error", f"Could not read MIDI file:\n{e}")
+            return
+
+        streams = parsed["streams"]
+        if not streams:
+            messagebox.showwarning("Empty MIDI", "No MIDI Note events were found in the selected file.")
+            return
+
+        pat_idx = self._get_pc_pat_idx()
+        info = self.svd.get_pattern_info(pat_idx)
+
+        dlg = tk.Toplevel(self)
+        dlg.title(f"Multi-Track MIDI Import -> Pattern {info['slot']} ({info['name']})")
+        dlg.geometry("680x360")
+        dlg.transient(self)
+        dlg.grab_set()
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            frm,
+            text=f"File: {os.path.basename(m_path)}  |  Detected Tempo: {parsed['bpm']:.1f} BPM  |  Length: {parsed['total_bars']} bar(s) ({len(streams)} stream(s))",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor=tk.W, pady=(0, 6))
+
+        top_opt = ttk.Frame(frm)
+        top_opt.pack(fill=tk.X, pady=4)
+        ttk.Label(top_opt, text=f"Import 4-Bar Window Starting at Bar (1..{parsed['total_bars']}):").pack(side=tk.LEFT)
+        var_start_bar = tk.StringVar(value="1")
+        ttk.Spinbox(top_opt, from_=1, to=max(1, parsed["total_bars"]), textvariable=var_start_bar, width=6).pack(side=tk.LEFT, padx=6)
+
+        var_apply_bpm = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            top_opt,
+            text=f"Set Pattern Tempo to {parsed['bpm']:.1f} BPM",
+            variable=var_apply_bpm,
+        ).pack(side=tk.LEFT, padx=12)
+
+        map_lf = ttk.LabelFrame(frm, text="Map MIDI Track / Channel Streams -> SH-4d Parts 1–5 (Raw MIDI Notes Preserved)", padding=8)
+        map_lf.pack(fill=tk.BOTH, expand=True, pady=6)
+
+        none_lbl = "— None (Keep Existing Part Sequence) —"
+        clear_lbl = "— Clear Part —"
+        all_choices = [none_lbl, clear_lbl] + [s["label"] for s in streams]
+
+        # Smart pre-selection: check Dawless setup channels (Ch 8, 9, 11, 12, 13/10) first, else sequential melodic + drum channel
+        part_titles = [
+            "Part 1 (Synth 1 / Ch 8):",
+            "Part 2 (Synth 2 / Ch 9):",
+            "Part 3 (Synth 3 / Ch 11):",
+            "Part 4 (Synth 4 / Ch 12):",
+            "Part 5 (Rhythm / Ch 13 & 10):",
+        ]
+        dawless_pref_ch = [8, 9, 11, 12, 13]
+        used_ids = set()
+        default_sel = [none_lbl] * 5
+
+        # 1. Match Dawless preferred channels or Ch 10 for drums
+        for p_i in range(5):
+            pref_c = dawless_pref_ch[p_i]
+            for s in streams:
+                if s["channel"] == pref_c and s["id"] not in used_ids:
+                    default_sel[p_i] = s["label"]
+                    used_ids.add(s["id"])
+                    break
+        if default_sel[4] == none_lbl:
+            for s in streams:
+                if s["channel"] == 10 and s["id"] not in used_ids:
+                    default_sel[4] = s["label"]
+                    used_ids.add(s["id"])
+                    break
+        # 2. Fill remaining Synth Parts 1..4 with remaining non-Ch10 streams
+        for p_i in range(4):
+            if default_sel[p_i] == none_lbl:
+                for s in streams:
+                    if s["id"] not in used_ids and s["channel"] not in (10, 13):
+                        default_sel[p_i] = s["label"]
+                        used_ids.add(s["id"])
+                        break
+
+        part_stream_vars = []
+        part_tr_vars = []
+        for p_i in range(5):
+            ttk.Label(map_lf, text=part_titles[p_i], font=("Segoe UI", 8, "bold")).grid(row=p_i, column=0, sticky=tk.W, pady=3, padx=4)
+            v_st = tk.StringVar(value=default_sel[p_i])
+            cb = ttk.Combobox(map_lf, textvariable=v_st, values=all_choices, state="readonly", width=52)
+            cb.grid(row=p_i, column=1, padx=4, pady=3)
+            ttk.Label(map_lf, text="Transpose:").grid(row=p_i, column=2, padx=(6, 2), pady=3)
+            v_tr = tk.StringVar(value="0")
+            ttk.Spinbox(map_lf, from_=-24, to=24, textvariable=v_tr, width=5).grid(row=p_i, column=3, padx=2, pady=3)
+            part_stream_vars.append(v_st)
+            part_tr_vars.append(v_tr)
+
+        def do_multitrack_import():
+            bar_val = max(1, int(var_start_bar.get()))
+            total_notes = 0
+            parts_touched = 0
+            for p_i in range(5):
+                choice = part_stream_vars[p_i].get()
+                tr_semi = max(-48, min(48, int(part_tr_vars[p_i].get())))
+                if choice == none_lbl:
+                    continue
+                elif choice == clear_lbl:
+                    self.svd.clear_steps_content(pat_idx, p_i, 1, 64)
+                    parts_touched += 1
+                else:
+                    for s in streams:
+                        if s["label"] == choice:
+                            total_notes += self.svd.import_midi_stream_to_part(
+                                pat_idx, p_i, s["events"], start_bar_1_indexed=bar_val, transpose_semi=tr_semi
+                            )
+                            parts_touched += 1
+                            break
+            if var_apply_bpm.get():
+                self.svd.set_pattern_info(pat_idx, tempo=parsed["bpm"])
+                self.var_pc_bpm.set(f"{parsed['bpm']:.2f}")
+            self.refresh_patterns()
+            self.refresh_pattern_creator_tab()
+            self.refresh_steps_for_pattern_part()
+            self.lbl_pc_status.config(
+                text=f"🎼 Imported {total_notes} notes across {parts_touched} part(s) from '{os.path.basename(m_path)}' (Bar {bar_val}..{bar_val+3})."
+            )
+            dlg.destroy()
+
+        btn_row = ttk.Frame(frm)
+        btn_row.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(btn_row, text="🚀 Import Mapped Tracks into Pattern", command=do_multitrack_import).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4)
+        )
+        ttk.Button(btn_row, text="Cancel", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
+
+    def on_pc_export_pattern_midi(self):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        info = self.svd.get_pattern_info(pat_idx)
+        safe_name = info["name"].strip().replace(" ", "_")
+        out_p = filedialog.asksaveasfilename(
+            title=f"Export Pattern {info['slot']} (All 5 Parts) to Standard MIDI File (.mid)",
+            defaultextension=".mid",
+            initialfile=f"SH4d_Pat_{info['slot']}_{safe_name}.mid",
+            filetypes=[("Standard MIDI File", "*.mid")],
+        )
+        if not out_p:
+            return
+        try:
+            self.svd.export_pattern_to_midi_file(pat_idx, out_p)
+            self.lbl_pc_status.config(text=f"📤 Exported Pattern {info['slot']} (5 Parts, {info['tempo']:.1f} BPM) to {os.path.basename(out_p)}.")
+            messagebox.showinfo(
+                "MIDI Exported",
+                f"Exported Pattern {info['slot']} ('{info['name']}', {info['tempo']:.1f} BPM, 5 Tracks on Ch 8, 9, 11, 12, 13) to:\n{out_p}",
+            )
+        except Exception as e:
+            messagebox.showerror("MIDI Export Error", f"Failed to export MIDI file:\n{e}")
 
 
 def print_summary(svd: SH4dSVD):
