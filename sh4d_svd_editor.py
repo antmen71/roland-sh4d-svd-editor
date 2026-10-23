@@ -391,15 +391,15 @@ class SH4dSVD:
         flt_env_depth = self.data[off + 0x102]
         resonance = struct.unpack("<H", self.data[off + 0x106 : off + 0x108])[0]
 
-        amp_atk = struct.unpack("<H", self.data[off + 0x328 : off + 0x32A])[0]
+        amp_atk = struct.unpack("<H", self.data[off + 0x32E : off + 0x330])[0]
         amp_dec = struct.unpack("<H", self.data[off + 0x332 : off + 0x334])[0]
         amp_sus = struct.unpack("<H", self.data[off + 0x334 : off + 0x336])[0]
         amp_rel = struct.unpack("<H", self.data[off + 0x33C : off + 0x33E])[0]
 
-        flt_atk = struct.unpack("<H", self.data[off + 0x38C : off + 0x38E])[0]
+        flt_atk = struct.unpack("<H", self.data[off + 0x38A : off + 0x38C])[0]
         flt_dec = struct.unpack("<H", self.data[off + 0x38E : off + 0x390])[0]
         flt_sus = struct.unpack("<H", self.data[off + 0x390 : off + 0x392])[0]
-        flt_rel = struct.unpack("<H", self.data[off + 0x392 : off + 0x394])[0]
+        flt_rel = struct.unpack("<H", self.data[off + 0x396 : off + 0x398])[0]
 
         lfo_shape = self.data[off + 0x3FC]
         lfo_rate = struct.unpack("<H", self.data[off + 0x400 : off + 0x402])[0]
@@ -542,7 +542,8 @@ class SH4dSVD:
                 o_base = off + 0x720 + o * 44
                 p_coarse_off = off + 0x0DA + o * 0x7C
                 if "wave" in od:
-                    self.data[o_base + 0] = max(0, min(255, int(od["wave"])))
+                    w_val = max(0, min(255, int(od["wave"])))
+                    self.data[o_base + 0] = w_val
                 if "coarse" in od:
                     c_u8 = u8_from_s8(max(-48, min(48, int(od["coarse"]))))
                     self.data[o_base + 1] = c_u8
@@ -591,10 +592,15 @@ class SH4dSVD:
                 self.data[p_base + 6 : p_base + 8] = struct.pack("<H", val)
 
         # Amp ADSR written across all 4 Partials (stride 0x18 = 24)
+        # CRITICAL: a_base + 1 (0x329, 0x341, 0x359, 0x371) is Partial Amp Output Enable (MUST BE 1)!
+        # Amp Attack is at a_base + 6 (0x32E), Decay at +10 (0x332), Sustain at +12 (0x334), Release at +20 (0x33C).
         for p in range(4):
             a_base = off + 0x328 + p * 0x18
+            self.data[a_base + 1] = 1
+            self.data[a_base + 16 : a_base + 18] = struct.pack("<H", 1023)
+            self.data[a_base + 18 : a_base + 20] = struct.pack("<H", 1023)
             if "amp_atk" in kw and kw["amp_atk"] is not None:
-                self.data[a_base : a_base + 2] = struct.pack("<H", max(0, min(1023, int(kw["amp_atk"]))))
+                self.data[a_base + 6 : a_base + 8] = struct.pack("<H", max(0, min(1023, int(kw["amp_atk"]))))
             if "amp_dec" in kw and kw["amp_dec"] is not None:
                 self.data[a_base + 10 : a_base + 12] = struct.pack("<H", max(0, min(1023, int(kw["amp_dec"]))))
             if "amp_sus" in kw and kw["amp_sus"] is not None:
@@ -603,16 +609,23 @@ class SH4dSVD:
                 self.data[a_base + 20 : a_base + 22] = struct.pack("<H", max(0, min(1023, int(kw["amp_rel"]))))
 
         # Filter ADSR written across all 4 Partials (stride 0x10 = 16)
+        # CRITICAL: f_base + 2 (0x38A) is Filter Attack, f_base + 4 (0x38C) is Filter Slope/Enable (30),
+        # f_base + 6 (0x38E) is Filter Decay, f_base + 8 (0x390) is Filter Sustain,
+        # f_base + 10..13 (0x392..0x395) are Filter Peak Levels (1023), f_base + 14 (0x396) is Filter Release.
         for p in range(4):
             f_base = off + 0x388 + p * 0x10
+            if struct.unpack("<H", self.data[f_base + 4 : f_base + 6])[0] == 0 and self.data[off + 0x08] not in (22, 23):
+                self.data[f_base + 4 : f_base + 6] = struct.pack("<H", 30)
+            self.data[f_base + 10 : f_base + 12] = struct.pack("<H", 1023)
+            self.data[f_base + 12 : f_base + 14] = struct.pack("<H", 1023)
             if "flt_atk" in kw and kw["flt_atk"] is not None:
-                self.data[f_base + 4 : f_base + 6] = struct.pack("<H", max(0, min(1023, int(kw["flt_atk"]))))
+                self.data[f_base + 2 : f_base + 4] = struct.pack("<H", max(0, min(1023, int(kw["flt_atk"]))))
             if "flt_dec" in kw and kw["flt_dec"] is not None:
                 self.data[f_base + 6 : f_base + 8] = struct.pack("<H", max(0, min(1023, int(kw["flt_dec"]))))
             if "flt_sus" in kw and kw["flt_sus"] is not None:
                 self.data[f_base + 8 : f_base + 10] = struct.pack("<H", max(0, min(1023, int(kw["flt_sus"]))))
             if "flt_rel" in kw and kw["flt_rel"] is not None:
-                self.data[f_base + 10 : f_base + 12] = struct.pack("<H", max(0, min(1023, int(kw["flt_rel"]))))
+                self.data[f_base + 14 : f_base + 16] = struct.pack("<H", max(0, min(1023, int(kw["flt_rel"]))))
 
         # LFO written across all 4 Partials (stride 0x68 = 104)
         for p in range(4):
@@ -1074,6 +1087,13 @@ class SH4dSVD:
     # ---------------- PRESET GENERATOR, MUTATOR & MATH WAVE / STEP LAB ----------------
     def find_template_patch_idx(self, preferred_model: int = 16) -> int:
         """Finds a valid non-init hardware patch index in PATc to clone base routing tables from."""
+        if preferred_model == 16:
+            # Prefer a 4-oscillator SH-4d patch where all 4 partials are enabled (e.g. Saw&Pulse Bass or Mod Apart Pluck)
+            for i in range(256):
+                p = self.get_patch_params(i)
+                if p["osc_model"] == 16 and p["name"].strip().upper() != "INIT TONE":
+                    if all(o["wave"] > 0 for o in p["oscs"]):
+                        return i
         for i in range(256):
             p = self.get_patch_params(i)
             if p["osc_model"] == preferred_model and p["name"].strip().upper() != "INIT TONE":
@@ -1266,7 +1286,7 @@ class SH4dSVD:
                 target_idx,
                 name=name,
                 osc_model=19,
-                category=12,
+                category=21,
                 patch_level=random.randint(105, 122),
                 mono_poly=0,
                 legato_sw=1,
@@ -1277,17 +1297,17 @@ class SH4dSVD:
                 slider2=random.randint(60, 115),
                 slider3=random.randint(40, 95),
                 slider4=random.randint(0, 35),
-                cutoff=random.randint(180, 420),
+                cutoff=random.randint(220, 460),
                 resonance=random.randint(580, 860),
                 flt_env_depth=random.randint(68, 92),
                 flt_atk=random.randint(0, 15),
                 flt_dec=random.randint(220, 480),
-                flt_sus=random.randint(0, 90),
-                flt_rel=random.randint(80, 240),
+                flt_sus=random.randint(40, 140),
+                flt_rel=random.randint(120, 280),
                 amp_atk=0,
                 amp_dec=random.randint(380, 680),
-                amp_sus=random.randint(400, 820),
-                amp_rel=random.randint(80, 220),
+                amp_sus=random.randint(450, 880),
+                amp_rel=random.randint(120, 260),
                 mfx_type=random.choice([19, 20, 21, 35]),
                 mfx_sw=1,
                 mfx_cho=random.randint(0, 30),
@@ -1296,10 +1316,10 @@ class SH4dSVD:
         elif "Reese" in genre:
             name = custom_name or f"Reese Bass #{sfx}"
             oscs = [
-                {"wave": 1, "coarse": 0, "fine": -random.randint(14, 28), "pw": 64, "pwm": 10, "fat": random.randint(40, 90), "pan": -20},
-                {"wave": 1, "coarse": 0, "fine": random.randint(14, 28), "pw": 64, "pwm": 10, "fat": random.randint(40, 90), "pan": 20},
-                {"wave": 2, "coarse": -12, "fine": 0, "pw": random.randint(40, 90), "pwm": 24, "fat": random.randint(20, 60), "pan": 0},
-                {"wave": 4, "coarse": -12, "fine": 0, "pw": 0, "pwm": 0, "fat": 80, "pan": 0},
+                {"wave": 1, "coarse": 0, "fine": -random.randint(14, 28), "pw": 64, "pwm": 10, "fat": random.randint(40, 90), "pan": 44},
+                {"wave": 1, "coarse": 0, "fine": random.randint(14, 28), "pw": 64, "pwm": 10, "fat": random.randint(40, 90), "pan": 84},
+                {"wave": 2, "coarse": -12, "fine": 0, "pw": random.randint(40, 90), "pwm": 24, "fat": random.randint(20, 60), "pan": 64},
+                {"wave": 4, "coarse": -12, "fine": 0, "pw": 0, "pwm": 0, "fat": 80, "pan": 64},
             ]
             mtx = [
                 {"src": 0, "dst1": 6, "dep1": random.randint(12, 32), "dst2": 17, "dep2": 22, "dst3": 0, "dep3": 0, "dst4": 0, "dep4": 0},
@@ -1311,7 +1331,7 @@ class SH4dSVD:
                 target_idx,
                 name=name,
                 osc_model=16,
-                category=12,
+                category=21,
                 patch_level=115,
                 mono_poly=0,
                 legato_sw=1,
@@ -1324,7 +1344,7 @@ class SH4dSVD:
                 slider2=122,
                 slider3=random.randint(85, 115),
                 slider4=random.randint(90, 127),
-                cutoff=random.randint(240, 520),
+                cutoff=random.randint(280, 560),
                 resonance=random.randint(220, 480),
                 flt_env_depth=random.randint(60, 78),
                 flt_atk=random.randint(10, 80),
@@ -1347,10 +1367,10 @@ class SH4dSVD:
             is_lush = "Lush" in genre
             name = custom_name or (f"Lush Pad #{sfx}" if is_lush else f"Warm Pad #{sfx}")
             oscs = [
-                {"wave": 10 if is_lush else 1, "coarse": 0, "fine": -random.randint(8, 18), "pw": 64, "pwm": 18, "fat": random.randint(35, 85), "pan": -32},
-                {"wave": 6 if is_lush else 2, "coarse": 0, "fine": random.randint(8, 18), "pw": random.randint(50, 90), "pwm": 28, "fat": random.randint(35, 85), "pan": 32},
-                {"wave": 3, "coarse": 12 if is_lush else 0, "fine": -random.randint(4, 12), "pw": 64, "pwm": 0, "fat": 40, "pan": -16},
-                {"wave": 4, "coarse": -12, "fine": 0, "pw": 0, "pwm": 0, "fat": 50, "pan": 16},
+                {"wave": 10 if is_lush else 1, "coarse": 0, "fine": -random.randint(8, 18), "pw": 64, "pwm": 18, "fat": random.randint(35, 85), "pan": 32},
+                {"wave": 6 if is_lush else 2, "coarse": 0, "fine": random.randint(8, 18), "pw": random.randint(50, 90), "pwm": 28, "fat": random.randint(35, 85), "pan": 96},
+                {"wave": 3, "coarse": 12 if is_lush else 0, "fine": -random.randint(4, 12), "pw": 64, "pwm": 0, "fat": 40, "pan": 48},
+                {"wave": 4, "coarse": -12, "fine": 0, "pw": 0, "pwm": 0, "fat": 50, "pan": 80},
             ]
             mtx = [
                 {"src": 0, "dst1": 17, "dep1": 28, "dst2": 18, "dep2": -24, "dst3": 28, "dep3": 18, "dst4": 6, "dep4": 14},
@@ -1362,8 +1382,8 @@ class SH4dSVD:
                 target_idx,
                 name=name,
                 osc_model=16,
-                category=21,
-                patch_level=104,
+                category=38,
+                patch_level=108,
                 mono_poly=1,
                 legato_sw=0,
                 porta_sw=0,
@@ -1372,16 +1392,16 @@ class SH4dSVD:
                 matrix=mtx,
                 slider1=118,
                 slider2=114,
-                slider3=random.randint(65, 105),
-                slider4=random.randint(70, 105),
-                cutoff=random.randint(360, 680),
+                slider3=random.randint(80, 115),
+                slider4=random.randint(80, 115),
+                cutoff=random.randint(420, 760),
                 resonance=random.randint(120, 340),
-                flt_env_depth=random.randint(56, 72),
-                flt_atk=random.randint(320, 680),
+                flt_env_depth=random.randint(56, 76),
+                flt_atk=random.randint(120, 340),
                 flt_dec=random.randint(520, 860),
                 flt_sus=random.randint(580, 880),
                 flt_rel=random.randint(520, 880),
-                amp_atk=random.randint(280, 640),
+                amp_atk=random.randint(90, 280),
                 amp_dec=random.randint(580, 880),
                 amp_sus=random.randint(680, 960),
                 amp_rel=random.randint(540, 900),
@@ -1397,37 +1417,37 @@ class SH4dSVD:
             is_dub = "Dub" in genre
             name = custom_name or (f"Dub Chord #{sfx}" if is_dub else f"Synth Pluck #{sfx}")
             oscs = [
-                {"wave": 6 if is_dub else 10, "coarse": 0, "fine": -9, "pw": 70, "pwm": 15, "fat": 60, "pan": -18},
-                {"wave": 2, "coarse": 7 if is_dub else 0, "fine": 9, "pw": 80, "pwm": 20, "fat": 50, "pan": 18},
-                {"wave": 1, "coarse": 12 if not is_dub else 3, "fine": -5, "pw": 64, "pwm": 0, "fat": 40, "pan": 0},
-                {"wave": 11 if is_dub else 3, "coarse": -12, "fine": 0, "pw": 0, "pwm": 0, "fat": 30, "pan": 0},
+                {"wave": 6 if is_dub else 10, "coarse": 0, "fine": -9, "pw": 70, "pwm": 15, "fat": 60, "pan": 46},
+                {"wave": 2, "coarse": 7 if is_dub else 0, "fine": 9, "pw": 80, "pwm": 20, "fat": 50, "pan": 82},
+                {"wave": 1, "coarse": 12 if not is_dub else 3, "fine": -5, "pw": 64, "pwm": 0, "fat": 40, "pan": 64},
+                {"wave": 11 if is_dub else 3, "coarse": -12, "fine": 0, "pw": 0, "pwm": 0, "fat": 30, "pan": 64},
             ]
             self.set_patch_params(
                 target_idx,
                 name=name,
                 osc_model=16,
-                category=15,
-                patch_level=110,
+                category=34,
+                patch_level=114,
                 mono_poly=1,
                 legato_sw=0,
                 porta_sw=0,
                 analog_feel=random.randint(20, 60),
                 oscs=oscs,
                 slider1=125,
-                slider2=110,
-                slider3=random.randint(75, 115),
-                slider4=random.randint(25, 65) if is_dub else random.randint(60, 95),
-                cutoff=random.randint(180, 380),
-                resonance=random.randint(320, 620) if is_dub else random.randint(160, 380),
-                flt_env_depth=random.randint(74, 96),
+                slider2=115,
+                slider3=random.randint(85, 120),
+                slider4=random.randint(35, 75) if is_dub else random.randint(70, 105),
+                cutoff=random.randint(320, 620),
+                resonance=random.randint(320, 580) if is_dub else random.randint(160, 380),
+                flt_env_depth=random.randint(72, 98),
                 flt_atk=0,
-                flt_dec=random.randint(180, 380),
-                flt_sus=random.randint(0, 120),
-                flt_rel=random.randint(180, 420),
+                flt_dec=random.randint(220, 480),
+                flt_sus=random.randint(120, 360),
+                flt_rel=random.randint(220, 480),
                 amp_atk=0,
-                amp_dec=random.randint(220, 460),
-                amp_sus=random.randint(0, 180),
-                amp_rel=random.randint(220, 480),
+                amp_dec=random.randint(280, 560),
+                amp_sus=random.randint(160, 440),
+                amp_rel=random.randint(240, 520),
                 mfx_type=45 if is_dub else 25,
                 mfx_sw=1,
                 mfx_cho=random.randint(45, 95),
@@ -1439,7 +1459,7 @@ class SH4dSVD:
                 target_idx,
                 name=name,
                 osc_model=22,
-                category=8,
+                category=35,
                 patch_level=114,
                 mono_poly=0,
                 legato_sw=1,
@@ -1472,25 +1492,25 @@ class SH4dSVD:
                 target_idx,
                 name=name,
                 osc_model=model,
-                category=28,
-                patch_level=108,
+                category=14,
+                patch_level=112,
                 mono_poly=1,
                 legato_sw=0,
                 porta_sw=0,
-                slider1=random.randint(90, 127),
-                slider2=random.randint(65, 120),
-                slider3=random.randint(45, 110),
-                slider4=random.randint(30, 95),
+                slider1=random.randint(95, 127),
+                slider2=random.randint(75, 120),
+                slider3=random.randint(55, 110),
+                slider4=random.randint(40, 95),
                 cutoff=random.randint(520, 880),
                 resonance=random.randint(140, 360),
                 flt_env_depth=random.randint(64, 82),
                 flt_atk=0,
                 flt_dec=random.randint(420, 760),
-                flt_sus=random.randint(40, 220),
+                flt_sus=random.randint(180, 480),
                 flt_rel=random.randint(480, 880),
                 amp_atk=0,
                 amp_dec=random.randint(460, 820),
-                amp_sus=random.randint(0, 160),
+                amp_sus=random.randint(180, 480),
                 amp_rel=random.randint(520, 920),
                 mfx_type=25,
                 mfx_sw=1,
@@ -1516,17 +1536,18 @@ class SH4dSVD:
                 target_idx,
                 name=name,
                 osc_model=23,
-                patch_level=112,
+                category=38,
+                patch_level=114,
                 cutoff=random.randint(360, 780),
                 resonance=random.randint(180, 480),
                 flt_env_depth=random.randint(64, 86),
-                flt_atk=random.randint(0, 120),
+                flt_atk=random.randint(0, 60),
                 flt_dec=random.randint(320, 680),
-                flt_sus=random.randint(220, 720),
+                flt_sus=random.randint(320, 760),
                 flt_rel=random.randint(240, 640),
-                amp_atk=random.randint(0, 90),
+                amp_atk=random.randint(0, 40),
                 amp_dec=random.randint(400, 780),
-                amp_sus=random.randint(350, 880),
+                amp_sus=random.randint(450, 880),
                 amp_rel=random.randint(260, 680),
                 mfx_cho=random.randint(35, 95),
                 mfx_rev=random.randint(45, 110),
@@ -1548,8 +1569,9 @@ class SH4dSVD:
                 target_idx,
                 name=name,
                 osc_model=27,
+                category=41,
                 patch_level=114,
-                cutoff=random.randint(280, 680),
+                cutoff=random.randint(340, 740),
                 resonance=random.randint(240, 560),
                 flt_env_depth=random.randint(62, 86),
                 mfx_cho=random.randint(40, 95),
