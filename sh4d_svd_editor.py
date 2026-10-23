@@ -1064,25 +1064,134 @@ class SH4dSVD:
         soff = self.get_step_offset(pat_idx, part_idx, step_idx_0_63)
         sb = self.data[soff : soff + 52]
         notes = []
-        gates = []
         vels = []
+        gates = []
         probs = []
+        substeps = []
         for v in range(8):
             n = sb[v]
             if n != 0xFF:
                 notes.append(n)
-                gates.append(sb[8 + v])
-                vels.append(sb[16 + v])
+                vels.append(sb[8 + v])
+                gates.append(sb[16 + v])
                 probs.append(sb[32 + v])
-        note_names = ", ".join(f"{midi_note_name(n)} ({n})" for n in notes) if notes else "—"
+                substeps.append(sb[40 + v])
+        if part_idx == 4:
+            # Drum Part 5: also show short drum names for notes 36..61
+            d_tags = []
+            for n in notes:
+                if 36 <= n <= 61:
+                    lbl = DRUM_KEY_LABELS[n - 36].split("/")[0].split("(")[0].strip()
+                    d_tags.append(f"{lbl}({n})")
+                else:
+                    d_tags.append(f"{midi_note_name(n)}({n})")
+            note_names = ", ".join(d_tags) if d_tags else "—"
+        else:
+            note_names = ", ".join(f"{midi_note_name(n)} ({n})" for n in notes) if notes else "—"
         return {
             "step": step_idx_0_63 + 1,
             "notes": notes,
             "note_names": note_names,
-            "vel": vels[0] if vels else 80,
+            "vel": vels[0] if vels else 100,
             "gate": gates[0] if gates else 80,
             "prob": probs[0] if probs else 100,
+            "substep": substeps[0] if substeps else 0,
+            "vels": vels,
+            "gates": gates,
+            "probs": probs,
+            "substeps": substeps,
         }
+
+    def set_step_info(
+        self,
+        pat_idx: int,
+        part_idx: int,
+        step_idx_0_63: int,
+        notes: list,
+        vel: int = 100,
+        gate: int = 80,
+        prob: int = 100,
+        substep: int = 0,
+        per_note_vels: list = None,
+        per_note_gates: list = None,
+        per_note_probs: list = None,
+        per_note_substeps: list = None,
+    ):
+        """Writes a 52-byte step record in PRFd (up to 8 polyphonic notes or drum hits)."""
+        soff = self.get_step_offset(pat_idx, part_idx, step_idx_0_63)
+        clean_notes = [max(0, min(127, int(n))) for n in notes[:8] if n is not None and 0 <= int(n) <= 127]
+        sb = bytearray(52)
+        for v in range(8):
+            if v < len(clean_notes):
+                sb[v] = clean_notes[v]
+                v_vel = per_note_vels[v] if (per_note_vels and v < len(per_note_vels)) else vel
+                v_gate = per_note_gates[v] if (per_note_gates and v < len(per_note_gates)) else gate
+                v_prob = per_note_probs[v] if (per_note_probs and v < len(per_note_probs)) else prob
+                v_sub = per_note_substeps[v] if (per_note_substeps and v < len(per_note_substeps)) else substep
+                sb[8 + v] = max(1, min(127, int(v_vel)))
+                sb[16 + v] = max(1, min(127, int(v_gate)))
+                sb[32 + v] = max(0, min(100, int(v_prob)))
+                sb[40 + v] = max(0, min(13, int(v_sub)))
+            else:
+                sb[v] = 0xFF
+                sb[8 + v] = 80
+                sb[16 + v] = 80
+                sb[32 + v] = 100
+                sb[40 + v] = 0
+        # Preserve Motion Recording bytes (sb[24..31]) if already present, else hardware default [255,255,255,255,0,0,0,0]
+        sb[24:28] = b"\xff\xff\xff\xff"
+        sb[28:32] = b"\x00\x00\x00\x00"
+        sb[48:52] = b"\x00\x00\x00\x00"
+        self.data[soff : soff + 52] = sb
+
+    def toggle_drum_step_note(
+        self,
+        pat_idx: int,
+        step_idx_0_63: int,
+        drum_midi_note: int,
+        vel: int = 100,
+        gate: int = 80,
+        prob: int = 100,
+    ) -> bool:
+        """Toggles a drum instrument MIDI note (36..61) on Rhythm Part 5 (part_idx=4) at step_idx_0_63."""
+        st = self.get_step_info(pat_idx, 4, step_idx_0_63)
+        notes = list(st["notes"])
+        vels = list(st["vels"])
+        gates = list(st["gates"])
+        probs = list(st["probs"])
+        subs = list(st["substeps"])
+        if drum_midi_note in notes:
+            idx = notes.index(drum_midi_note)
+            notes.pop(idx)
+            vels.pop(idx)
+            gates.pop(idx)
+            probs.pop(idx)
+            subs.pop(idx)
+            added = False
+        else:
+            if len(notes) >= 8:
+                notes.pop(-1)
+                vels.pop(-1)
+                gates.pop(-1)
+                probs.pop(-1)
+                subs.pop(-1)
+            notes.append(drum_midi_note)
+            vels.append(vel)
+            gates.append(gate)
+            probs.append(prob)
+            subs.append(0)
+            added = True
+        self.set_step_info(
+            pat_idx,
+            4,
+            step_idx_0_63,
+            notes,
+            per_note_vels=vels,
+            per_note_gates=gates,
+            per_note_probs=probs,
+            per_note_substeps=subs,
+        )
+        return added
 
     def copy_part_content(
         self,
@@ -1149,19 +1258,276 @@ class SH4dSVD:
     def clear_steps_content(
         self, pat_idx: int, part_idx: int, start_step_1_64: int, end_step_1_64: int
     ):
-        """Resets selected steps to clean initialized state."""
+        """Resets selected steps to clean hardware-initialized state."""
         s_start = max(0, min(63, int(start_step_1_64) - 1))
         s_end = max(s_start, min(63, int(end_step_1_64) - 1))
         empty_step = (
             b"\xff" * 8
             + b"\x50" * 16
-            + b"\xff" * 8
+            + b"\xff" * 4
+            + b"\x00" * 4
             + b"\x64" * 8
             + b"\x00" * 12
         )
         for s in range(s_start, s_end + 1):
             off = self.get_step_offset(pat_idx, part_idx, s)
             self.data[off : off + 52] = empty_step
+
+    SCALES = {
+        "Minor (Aeolian)": [0, 2, 3, 5, 7, 8, 10],
+        "Dorian": [0, 2, 3, 5, 7, 9, 10],
+        "Phrygian (Dark/Techno)": [0, 1, 3, 5, 7, 8, 10],
+        "Harmonic Minor": [0, 2, 3, 5, 7, 8, 11],
+        "Pentatonic Minor": [0, 3, 5, 7, 10],
+        "Major (Ionian)": [0, 2, 4, 5, 7, 9, 11],
+    }
+
+    CHORD_TYPES = {
+        "Single Note": [0],
+        "Octave (+12)": [0, 12],
+        "Power 5th (0, +7)": [0, 7],
+        "Minor Triad (0, +3, +7)": [0, 3, 7],
+        "Major Triad (0, +4, +7)": [0, 4, 7],
+        "Minor 7th (0, +3, +7, +10)": [0, 3, 7, 10],
+        "Major 7th (0, +4, +7, +11)": [0, 4, 7, 11],
+        "Sus4 (0, +5, +7)": [0, 5, 7],
+    }
+
+    KEY_TO_SEMITONE = {
+        "C": 0, "C#": 1, "D": 2, "D#": 3, "E": 4, "F": 5,
+        "F#": 6, "G": 7, "G#": 8, "A": 9, "A#": 10, "B": 11,
+    }
+
+    @staticmethod
+    def compute_euclidean_hits(pulses: int, steps: int, rotation: int = 0) -> list:
+        """Returns a list of booleans of length `steps` with `pulses` evenly distributed."""
+        steps = max(1, min(64, int(steps)))
+        pulses = max(0, min(steps, int(pulses)))
+        if pulses == 0:
+            return [False] * steps
+        hit_list = [((i * pulses) % steps) < pulses for i in range(steps)]
+        if rotation:
+            r = rotation % steps
+            hit_list = hit_list[-r:] + hit_list[:-r]
+        return hit_list
+
+    def generate_part_sequence(
+        self,
+        pat_idx: int,
+        part_idx: int,
+        role: str,
+        root_key: str = "C",
+        scale_name: str = "Minor (Aeolian)",
+        step_len: int = 16,
+        density_pct: int = 65,
+    ):
+        """Generates a musical 16..64 step sequence on (pat_idx, part_idx) according to `role`."""
+        step_len = max(1, min(64, int(step_len)))
+        self.set_part_step_length(pat_idx, part_idx, step_len)
+        self.clear_steps_content(pat_idx, part_idx, 1, 64)
+
+        root_semi = self.KEY_TO_SEMITONE.get(root_key.strip(), 0)
+        intervals = self.SCALES.get(scale_name, self.SCALES["Minor (Aeolian)"])
+        dens = max(10, min(100, int(density_pct))) / 100.0
+
+        # If Part 5 (Rhythm) or a Drum Role is selected:
+        if part_idx == 4 or "Drum" in role:
+            target_part = 4 if part_idx == 4 else part_idx
+            self.set_part_step_length(pat_idx, target_part, step_len)
+            self.clear_steps_content(pat_idx, target_part, 1, 64)
+            is_break = "Break" in role or "Electro" in role
+            is_minimal = "Minimal" in role or "Acid" in role
+            for s in range(step_len):
+                pos16 = s % 16
+                notes = []
+                vels = []
+                gates = []
+                probs = []
+                # 1. Kick (BD1 = 36)
+                if is_break:
+                    if pos16 in (0, 6, 10) or (pos16 == 14 and random.random() < 0.4):
+                        notes.append(36)
+                        vels.append(118 if pos16 == 0 else 104)
+                        gates.append(80)
+                        probs.append(100)
+                else:
+                    if pos16 % 4 == 0 or (pos16 == 15 and random.random() < 0.35 * dens):
+                        notes.append(36)
+                        vels.append(118 if pos16 % 4 == 0 else 88)
+                        gates.append(80)
+                        probs.append(100 if pos16 % 4 == 0 else 75)
+                # 2. Snare (38) & Clap (39)
+                if pos16 in (4, 12):
+                    if not is_minimal:
+                        notes.append(38)
+                        vels.append(108)
+                        gates.append(80)
+                        probs.append(100)
+                    notes.append(39)
+                    vels.append(112)
+                    gates.append(80)
+                    probs.append(100)
+                elif is_break and pos16 in (7, 15) and random.random() < 0.55:
+                    notes.append(38)
+                    vels.append(72)
+                    gates.append(60)
+                    probs.append(80)
+                # 3. Closed Hat (42) & Open Hat (46)
+                if pos16 % 4 == 2:
+                    notes.append(46)
+                    vels.append(98)
+                    gates.append(85)
+                    probs.append(100)
+                elif random.random() < dens:
+                    notes.append(42)
+                    vels.append(92 if pos16 % 2 == 0 else 68)
+                    gates.append(55)
+                    probs.append(100 if pos16 % 2 == 0 else 85)
+                # 4. Percussion / Rim / Tom accent (40, 45, 51)
+                if pos16 in (3, 9, 11, 14) and random.random() < 0.45 * dens:
+                    perc_n = random.choice([40, 45, 47, 51])
+                    if perc_n not in notes:
+                        notes.append(perc_n)
+                        vels.append(random.randint(72, 98))
+                        gates.append(65)
+                        probs.append(random.choice([75, 90, 100]))
+                if notes:
+                    self.set_step_info(
+                        pat_idx, target_part, s, notes,
+                        per_note_vels=vels, per_note_gates=gates, per_note_probs=probs,
+                    )
+            return
+
+        # Melodic / Polyphonic Synth Roles (Parts 1..4)
+        if "Acid" in role:
+            base_oct = 36 + root_semi  # C2..B2
+            scale_pool = [base_oct + iv for iv in intervals] + [base_oct + 12, base_oct + 12 + intervals[1], base_oct + 12 + intervals[4]]
+            for s in range(step_len):
+                if s % 4 == 0 or random.random() < dens:
+                    n = base_oct if s % 8 == 0 else random.choice(scale_pool)
+                    is_accent = (s % 4 == 0) or (random.random() < 0.35)
+                    is_slide = random.random() < 0.30
+                    vel = random.randint(114, 126) if is_accent else random.randint(76, 96)
+                    gate = 108 if is_slide else random.randint(48, 72)
+                    self.set_step_info(pat_idx, part_idx, s, [n], vel=vel, gate=gate, prob=100)
+        elif "Bass" in role:
+            base_oct = 36 + root_semi  # C2..B2
+            for s in range(step_len):
+                pos4 = s % 4
+                bar_deg = (s // 16) % 4
+                deg_offset = [0, intervals[min(5, len(intervals)-1)], intervals[min(3, len(intervals)-1)], intervals[min(4, len(intervals)-1)]][bar_deg]
+                root_n = base_oct + (deg_offset if s >= 16 else 0)
+                if pos4 == 2:
+                    # Classic offbeat octave or root bass hit
+                    n = root_n + 12 if random.random() < 0.65 else root_n
+                    self.set_step_info(pat_idx, part_idx, s, [n], vel=112, gate=78, prob=100)
+                elif pos4 == 3 and random.random() < dens:
+                    n = root_n + random.choice([0, 7, 12])
+                    self.set_step_info(pat_idx, part_idx, s, [n], vel=92, gate=62, prob=95)
+                elif pos4 == 0 and (s % 8 == 0 or random.random() < 0.45 * dens):
+                    self.set_step_info(pat_idx, part_idx, s, [root_n], vel=116, gate=82, prob=100)
+                elif pos4 == 1 and random.random() < 0.4 * dens:
+                    self.set_step_info(pat_idx, part_idx, s, [root_n], vel=84, gate=55, prob=85)
+        elif "Chord" in role or "Dub" in role:
+            base_oct = 48 + root_semi  # C3..B3
+            is_dub = "Dub" in role
+            prog_degrees = [0, 5, 3, 4] if len(intervals) >= 6 else [0, 2, 3, 4]
+            for s in range(step_len):
+                deg = prog_degrees[(s // 4) % len(prog_degrees)]
+                chord_notes = []
+                for c_step in (0, 2, 4, 6):
+                    sc_idx = deg + c_step
+                    oct_shift = (sc_idx // len(intervals)) * 12
+                    semi = intervals[sc_idx % len(intervals)] + oct_shift
+                    chord_notes.append(base_oct + semi)
+                if is_dub:
+                    if s % 16 in (0, 3, 6, 10, 14) and (s % 16 in (0, 6) or random.random() < dens):
+                        self.set_step_info(
+                            pat_idx, part_idx, s, chord_notes[:4],
+                            vel=random.randint(94, 114), gate=random.randint(45, 70), prob=100,
+                        )
+                else:
+                    if s % 4 == 0:
+                        self.set_step_info(
+                            pat_idx, part_idx, s, chord_notes[:4],
+                            vel=102, gate=98, prob=100,
+                        )
+        elif "Pluck" in role or "Arp" in role:
+            base_oct = 60 + root_semi  # C4..B4
+            arp_degrees = [0, 2, 4, 6, 7, 4, 2, 1] if len(intervals) >= 7 else [0, 1, 2, 3, 4, 3, 2, 1]
+            for s in range(step_len):
+                if s % 2 == 0 or random.random() < dens:
+                    deg = arp_degrees[s % len(arp_degrees)]
+                    oct_shift = (deg // len(intervals)) * 12
+                    semi = intervals[deg % len(intervals)] + oct_shift
+                    n = base_oct + semi
+                    vel = 110 if s % 4 == 0 else random.randint(78, 102)
+                    gate = random.randint(45, 72)
+                    prob = 100 if s % 2 == 0 else random.choice([85, 95, 100])
+                    self.set_step_info(pat_idx, part_idx, s, [n], vel=vel, gate=gate, prob=prob)
+        else:
+            # Counter-Melody / Lead Hook
+            base_oct = 60 + root_semi
+            motif_steps = [0, 3, 6, 8, 11, 14]
+            for s in range(step_len):
+                if (s % 16) in motif_steps or (random.random() < 0.35 * dens):
+                    deg = random.choice([0, 2, 3, 4, 6]) % len(intervals)
+                    oct_add = random.choice([0, 0, 12])
+                    n = base_oct + intervals[deg] + oct_add
+                    self.set_step_info(
+                        pat_idx, part_idx, s, [n],
+                        vel=random.randint(90, 116), gate=random.randint(65, 95), prob=100,
+                    )
+
+    def generate_full_pattern(
+        self,
+        pat_idx: int,
+        style: str = "Techno / Peak-Time (132 BPM)",
+        root_key: str = "C",
+        scale_name: str = "Minor (Aeolian)",
+        step_len: int = 16,
+        auto_assign_tones: bool = True,
+        custom_name: str = None,
+    ) -> dict:
+        """Generates a complete 5-Part Pattern (Drums + Bass + Chords + Pluck Arp + Lead) in pat_idx."""
+        # Clone clean header structure from Pattern 1-03 (idx 2) so all internal mixer/routing flags are valid
+        if pat_idx != 2:
+            src_off = self.get_pattern_offset(2)
+            dst_off = self.get_pattern_offset(pat_idx)
+            self.data[dst_off : dst_off + 0x92C] = self.data[src_off : src_off + 0x92C]
+
+        style_specs = {
+            "Techno / Peak-Time (132 BPM)": ("TECHNO GRV", 132.0, "Driving Bassline", "Dub Techno Stabs", "Pluck Arpeggio", "Lead Hook", "TR Drum Beat"),
+            "Acid House / 303 Groove (128 BPM)": ("ACID 303", 128.0, "Acid 303 Bassline", "Polyphonic Chords", "Pluck Arpeggio", "Lead Hook", "Acid Percussion"),
+            "Melodic Techno / Prog Pluck (124 BPM)": ("MELODIC PLK", 124.0, "Driving Bassline", "Polyphonic Chords", "Pluck Arpeggio", "Lead Hook", "TR Drum Beat"),
+            "Dub Techno Hypnotic (120 BPM)": ("DUB TECHNO", 120.0, "Driving Bassline", "Dub Techno Stabs", "Pluck Arpeggio", "Dub Techno Stabs", "Minimal Drums"),
+            "Synthwave / Electro 80s (112 BPM)": ("SYNTHWAVE", 112.0, "Driving Bassline", "Polyphonic Chords", "Pluck Arpeggio", "Lead Hook", "Electro Breakbeat"),
+        }
+        base_tag, bpm, r_p1, r_p2, r_p3, r_p4, r_p5 = style_specs.get(
+            style, ("SH4D GROOVE", 126.0, "Driving Bassline", "Polyphonic Chords", "Pluck Arpeggio", "Lead Hook", "TR Drum Beat")
+        )
+        sfx = random.randint(10, 99)
+        pat_name = (custom_name or f"{base_tag} {sfx}")[:16]
+
+        parts_mixer = None
+        if auto_assign_tones:
+            # Part 1: User Bass (e.g. UT001..003), Part 2: User Chord/Pad (UT009..012), Part 3: User Pluck (UT049..064 or UT004), Part 4: Lead (UT007..018), Part 5: User Kit UK01..05
+            pluck_pc = random.randint(48, 63) if self.get_patch_name(48).strip().upper() != "INIT TONE" else 3
+            parts_mixer = [
+                {"msb": 87, "lsb": 0, "pc": random.choice([0, 1, 2, 19]), "level": 106, "pan": 0},
+                {"msb": 87, "lsb": 0, "pc": random.choice([8, 9, 10, 11]), "level": 88, "pan": -14},
+                {"msb": 87, "lsb": 0, "pc": pluck_pc, "level": 96, "pan": 14},
+                {"msb": 87, "lsb": 0, "pc": random.choice([6, 13, 15, 17]), "level": 86, "pan": 6},
+                {"msb": 86, "lsb": 0, "pc": random.choice([0, 1, 2, 3, 4]), "level": 112, "pan": 0},
+            ]
+
+        self.set_pattern_info(pat_idx, name=pat_name, tempo=bpm, level=110, parts=parts_mixer)
+        self.generate_part_sequence(pat_idx, 0, r_p1, root_key, scale_name, step_len, density_pct=70)
+        self.generate_part_sequence(pat_idx, 1, r_p2, root_key, scale_name, step_len, density_pct=60)
+        self.generate_part_sequence(pat_idx, 2, r_p3, root_key, scale_name, step_len, density_pct=75)
+        self.generate_part_sequence(pat_idx, 3, r_p4, root_key, scale_name, step_len, density_pct=55)
+        self.generate_part_sequence(pat_idx, 4, r_p5, root_key, scale_name, step_len, density_pct=75)
+        return self.get_pattern_info(pat_idx)
 
     # ---------------- PRESET GENERATOR, MUTATOR & MATH WAVE / STEP LAB ----------------
     def find_template_patch_idx(self, preferred_model: int = 16) -> int:
@@ -2081,6 +2447,7 @@ class SH4dEditorApp(tk.Tk):
         self._build_patterns_tab()
         self._build_rhythm_tab()
         self._build_generator_tab()
+        self._build_pattern_creator_tab()
 
     # ---------------- TAB 0: LIVE REAL-TIME MIDI SYNTH CONTROLLER ----------------
     def _build_live_synth_tab(self):
@@ -2927,6 +3294,8 @@ class SH4dEditorApp(tk.Tk):
         self.refresh_patterns()
         self.refresh_patches()
         self.refresh_kits()
+        if hasattr(self, "cb_pc_pat"):
+            self.refresh_pattern_creator_tab()
 
     def refresh_patterns(self):
         sel = self.tree_pat.selection()
@@ -4239,6 +4608,815 @@ class SH4dEditorApp(tk.Tk):
         p = self.svd.generate_smart_preset(idx, "🎲 Mixed / Surprise Me")
         self._select_and_refresh_patch(idx)
         self.lbl_status.config(text=f"✨ Generated '{p['name']}' ({p['osc_model_label']}) in #{idx+1:03d}")
+
+    # ---------------- TAB 6: PATTERN STEP SEQUENCER & GROOVE CREATOR ----------------
+    DRUM_MATRIX_LANES = [
+        (36, "BD1 (36 C2)"),
+        (37, "BD2 (37 C#2)"),
+        (38, "SD1 (38 D2)"),
+        (39, "Clap (39 D#2)"),
+        (40, "SD2/Rim (40 E2)"),
+        (42, "Closed Hat (42 F#2)"),
+        (46, "Open Hat (46 A#2)"),
+        (51, "Ride/Perc (51 D#3)"),
+    ]
+
+    def _build_pattern_creator_tab(self):
+        tab = ttk.Frame(self.nb, padding=6)
+        self.nb.add(tab, text="🎹 6. Pattern Step Sequencer & Groove Creator")
+
+        self.pat_play_running = False
+        self.pat_play_step = 0
+        self.pat_play_after_id = None
+
+        # Top Pattern & Active Part Bar
+        top_bar = ttk.LabelFrame(tab, text="Pattern Selection, Tempo, Active Part & Tone Assignment", padding=6)
+        top_bar.pack(fill=tk.X, pady=(0, 6))
+
+        r1 = ttk.Frame(top_bar)
+        r1.pack(fill=tk.X, pady=2)
+        ttk.Label(r1, text="Pattern Slot:", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT)
+        self.var_pc_pat = tk.StringVar(value="1: 1-01")
+        pat_opts = [f"{i+1}: {(i//16)+1}-{(i%16)+1:02d}" for i in range(128)]
+        self.cb_pc_pat = ttk.Combobox(r1, textvariable=self.var_pc_pat, values=pat_opts, state="readonly", width=18)
+        self.cb_pc_pat.pack(side=tk.LEFT, padx=4)
+        self.cb_pc_pat.bind("<<ComboboxSelected>>", lambda _e: self.on_pc_select_pattern())
+
+        ttk.Button(r1, text="🔍 First Empty Slot", command=self.on_pc_find_empty_pattern).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(r1, text="Name:").pack(side=tk.LEFT, padx=(8, 2))
+        self.var_pc_name = tk.StringVar(value="USER PATTERN")
+        ttk.Entry(r1, textvariable=self.var_pc_name, width=15).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(r1, text="BPM:").pack(side=tk.LEFT, padx=(6, 2))
+        self.var_pc_bpm = tk.StringVar(value="128.0")
+        ttk.Entry(r1, textvariable=self.var_pc_bpm, width=7).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(r1, text="Lvl:").pack(side=tk.LEFT, padx=(4, 2))
+        self.var_pc_lvl = tk.StringVar(value="110")
+        ttk.Spinbox(r1, from_=0, to=127, textvariable=self.var_pc_lvl, width=5).pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(r1, text="💾 Update Name/BPM", command=self.on_pc_save_header).pack(side=tk.LEFT, padx=4)
+
+        self.btn_pc_play = ttk.Button(r1, text="▶️ Play Pattern Live (MIDI)", command=self.on_pc_toggle_live_play)
+        self.btn_pc_play.pack(side=tk.RIGHT, padx=4)
+
+        r2 = ttk.Frame(top_bar)
+        r2.pack(fill=tk.X, pady=(4, 1))
+        ttk.Label(r2, text="Active Part:", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT)
+        self.var_pc_part = tk.StringVar(value="1: Synth Part 1 (Ch 8)")
+        part_opts = [
+            "1: Synth Part 1 (Ch 8)",
+            "2: Synth Part 2 (Ch 9)",
+            "3: Synth Part 3 (Ch 11)",
+            "4: Synth Part 4 (Ch 12)",
+            "5: Rhythm Part 5 (Ch 13)",
+        ]
+        self.cb_pc_part = ttk.Combobox(r2, textvariable=self.var_pc_part, values=part_opts, state="readonly", width=23)
+        self.cb_pc_part.pack(side=tk.LEFT, padx=4)
+        self.cb_pc_part.bind("<<ComboboxSelected>>", lambda _e: self.on_pc_select_part())
+
+        ttk.Label(r2, text="Part Tone / Kit:").pack(side=tk.LEFT, padx=(8, 2))
+        self.var_pc_tone = tk.StringVar(value="")
+        self.cb_pc_tone = ttk.Combobox(r2, textvariable=self.var_pc_tone, state="readonly", width=28)
+        self.cb_pc_tone.pack(side=tk.LEFT, padx=2)
+        ttk.Button(r2, text="📌 Assign Tone to Part", command=self.on_pc_assign_tone).pack(side=tk.LEFT, padx=3)
+
+        ttk.Label(r2, text="Step Length (1..64):").pack(side=tk.LEFT, padx=(8, 2))
+        self.var_pc_slen = tk.StringVar(value="16")
+        ttk.Spinbox(r2, from_=1, to=64, textvariable=self.var_pc_slen, width=5, command=self.on_pc_apply_slen).pack(side=tk.LEFT, padx=2)
+        for q_len in (16, 32, 64):
+            ttk.Button(r2, text=f"{q_len}st", width=4, command=lambda l=q_len: self.on_pc_quick_slen(l)).pack(side=tk.LEFT, padx=1)
+
+        ttk.Button(r2, text="🧹 Clear Active Part", command=self.on_pc_clear_part).pack(side=tk.RIGHT, padx=4)
+
+        # Main 3-Pane Split
+        pw = tk.PanedWindow(tab, orient=tk.HORIZONTAL, sashwidth=6, sashrelief=tk.RAISED, bg="#b8b8b8")
+        pw.pack(fill=tk.BOTH, expand=True)
+
+        # LEFT PANE: Groove & Pattern Generator + Euclidean Sequencer
+        left = ttk.LabelFrame(pw, text="🎲 1. Groove & 5-Part Pattern Generator", padding=8)
+
+        g1 = ttk.LabelFrame(left, text="Musical Key, Scale & Full 5-Part Pattern Creator", padding=6)
+        g1.pack(fill=tk.X, pady=(0, 6))
+
+        rk = ttk.Frame(g1)
+        rk.pack(fill=tk.X, pady=2)
+        ttk.Label(rk, text="Root Key:").pack(side=tk.LEFT)
+        self.var_pc_key = tk.StringVar(value="C")
+        ttk.Combobox(
+            rk,
+            textvariable=self.var_pc_key,
+            values=list(SH4dSVD.KEY_TO_SEMITONE.keys()),
+            state="readonly",
+            width=5,
+        ).pack(side=tk.LEFT, padx=4)
+        ttk.Label(rk, text="Scale:").pack(side=tk.LEFT, padx=(4, 2))
+        self.var_pc_scale = tk.StringVar(value="Minor (Aeolian)")
+        ttk.Combobox(
+            rk,
+            textvariable=self.var_pc_scale,
+            values=list(SH4dSVD.SCALES.keys()),
+            state="readonly",
+            width=19,
+        ).pack(side=tk.LEFT, padx=2)
+
+        rs = ttk.Frame(g1)
+        rs.pack(fill=tk.X, pady=3)
+        ttk.Label(rs, text="Groove Style:").pack(side=tk.LEFT)
+        self.var_pc_style = tk.StringVar(value="Techno / Peak-Time (132 BPM)")
+        style_list = [
+            "Techno / Peak-Time (132 BPM)",
+            "Acid House / 303 Groove (128 BPM)",
+            "Melodic Techno / Prog Pluck (124 BPM)",
+            "Dub Techno Hypnotic (120 BPM)",
+            "Synthwave / Electro 80s (112 BPM)",
+        ]
+        ttk.Combobox(rs, textvariable=self.var_pc_style, values=style_list, state="readonly", width=26).pack(side=tk.LEFT, padx=4)
+
+        self.var_pc_auto_tones = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            g1,
+            text="Auto-Assign User Synth Patches & Drum Kit (Parts 1–5)",
+            variable=self.var_pc_auto_tones,
+        ).pack(anchor=tk.W, pady=2)
+
+        ttk.Button(
+            g1,
+            text="🚀 Generate Full 5-Part Pattern (Drums + Bass + Chords + Pluck + Lead)",
+            command=self.on_pc_generate_full_pattern,
+        ).pack(fill=tk.X, pady=(4, 2))
+
+        # Single Part Sequence Generator
+        g2 = ttk.LabelFrame(left, text="🎹 Single-Part Sequence Generator (Active Part Only)", padding=6)
+        g2.pack(fill=tk.X, pady=6)
+
+        rp1 = ttk.Frame(g2)
+        rp1.pack(fill=tk.X, pady=2)
+        ttk.Label(rp1, text="Part Role:").pack(side=tk.LEFT)
+        self.var_pc_role = tk.StringVar(value="Pluck Arpeggio")
+        role_opts = [
+            "Driving Bassline",
+            "Acid 303 Bassline",
+            "Pluck Arpeggio",
+            "Polyphonic Chords",
+            "Dub Techno Stabs",
+            "Lead Hook",
+            "TR Drum Beat",
+            "Electro Breakbeat",
+            "Minimal Drums",
+        ]
+        ttk.Combobox(rp1, textvariable=self.var_pc_role, values=role_opts, state="readonly", width=22).pack(side=tk.LEFT, padx=4)
+
+        rp2 = ttk.Frame(g2)
+        rp2.pack(fill=tk.X, pady=2)
+        ttk.Label(rp2, text="Note Density (%):").pack(side=tk.LEFT)
+        self.var_pc_density = tk.StringVar(value="70")
+        ttk.Spinbox(rp2, from_=15, to=100, increment=5, textvariable=self.var_pc_density, width=6).pack(side=tk.LEFT, padx=4)
+
+        ttk.Button(
+            g2,
+            text="✨ Generate Sequence on Active Part Only",
+            command=self.on_pc_generate_active_part,
+        ).pack(fill=tk.X, pady=(4, 2))
+
+        # Euclidean Sequencer
+        g3 = ttk.LabelFrame(left, text="📐 Euclidean Polyrhythm Generator E(k, n, rot)", padding=6)
+        g3.pack(fill=tk.X, pady=6)
+
+        re1 = ttk.Frame(g3)
+        re1.pack(fill=tk.X, pady=2)
+        ttk.Label(re1, text="Pulses (k):").pack(side=tk.LEFT)
+        self.var_euc_k = tk.StringVar(value="5")
+        ttk.Spinbox(re1, from_=1, to=64, textvariable=self.var_euc_k, width=4).pack(side=tk.LEFT, padx=2)
+        ttk.Label(re1, text="Steps (n):").pack(side=tk.LEFT, padx=(4, 1))
+        self.var_euc_n = tk.StringVar(value="16")
+        ttk.Spinbox(re1, from_=1, to=64, textvariable=self.var_euc_n, width=4).pack(side=tk.LEFT, padx=2)
+        ttk.Label(re1, text="Rot:").pack(side=tk.LEFT, padx=(4, 1))
+        self.var_euc_rot = tk.StringVar(value="0")
+        ttk.Spinbox(re1, from_=0, to=31, textvariable=self.var_euc_rot, width=4).pack(side=tk.LEFT, padx=2)
+
+        re2 = ttk.Frame(g3)
+        re2.pack(fill=tk.X, pady=2)
+        ttk.Label(re2, text="MIDI Note (e.g. 60=C4, 36=BD1, 42=CH):").pack(side=tk.LEFT)
+        self.var_euc_note = tk.StringVar(value="60")
+        ttk.Spinbox(re2, from_=0, to=127, textvariable=self.var_euc_note, width=5).pack(side=tk.LEFT, padx=4)
+
+        ttk.Button(
+            g3,
+            text="🔀 Apply Euclidean Rhythm to Active Part",
+            command=self.on_pc_apply_euclidean,
+        ).pack(fill=tk.X, pady=(4, 2))
+
+        self.lbl_pc_status = ttk.Label(
+            left,
+            text="Ready — Select a Pattern & Part to edit or generate.",
+            font=("Segoe UI", 8, "bold"),
+            wraplength=330,
+        )
+        self.lbl_pc_status.pack(anchor=tk.W, pady=(6, 0))
+
+        # CENTER PANE: Interactive 16-Step Sequencer Grid + 8-Lane TR Drum Matrix + Step Editor
+        center = ttk.LabelFrame(pw, text="🎛️ 2. Interactive 16/64-Step Grid, TR Drum Matrix & Step Editor", padding=8)
+
+        pg_bar = ttk.Frame(center)
+        pg_bar.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(pg_bar, text="Step Page:", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT)
+        self.var_pc_page = tk.IntVar(value=0)
+        for pg_i, pg_lbl in enumerate(["Steps 1–16", "Steps 17–32", "Steps 33–48", "Steps 49–64"]):
+            ttk.Radiobutton(
+                pg_bar,
+                text=pg_lbl,
+                variable=self.var_pc_page,
+                value=pg_i,
+                command=self.refresh_pc_grid_and_table,
+            ).pack(side=tk.LEFT, padx=4)
+
+        self.var_pc_paint_mode = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            pg_bar,
+            text="⚡ Paint Mode (Click Step Button to Toggle Note/Chord)",
+            variable=self.var_pc_paint_mode,
+        ).pack(side=tk.RIGHT, padx=2)
+
+        # 16 Hardware-style Step Buttons (2 rows of 8 steps for clean fit)
+        step_btn_lf = ttk.LabelFrame(center, text="16-Step Sequencer Bar (Click Step to Select or Paint)", padding=4)
+        step_btn_lf.pack(fill=tk.X, pady=3)
+        self.pc_step_btns = []
+        for s_i in range(16):
+            r_idx = s_i // 8
+            c_idx = s_i % 8
+            step_btn_lf.columnconfigure(c_idx, weight=1)
+            b = tk.Button(
+                step_btn_lf,
+                text=f"{s_i+1:02d}\n—",
+                width=7,
+                height=2,
+                relief=tk.RAISED,
+                bg="#21262d",
+                fg="#c9d1d9",
+                font=("Segoe UI", 8, "bold"),
+                command=lambda idx=s_i: self.on_pc_click_step_btn(idx),
+            )
+            b.grid(row=r_idx, column=c_idx, padx=2, pady=2, sticky="ew")
+            self.pc_step_btns.append(b)
+
+        # Selected Step Polyphonic Note / Chord / Velocity / Gate Editor
+        ed_lf = ttk.LabelFrame(center, text="✏️ Selected Step Note / Chord / Velocity / Gate Editor", padding=6)
+        ed_lf.pack(fill=tk.X, pady=4)
+
+        er1 = ttk.Frame(ed_lf)
+        er1.pack(fill=tk.X, pady=2)
+        ttk.Label(er1, text="Selected Step (1..64):", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT)
+        self.var_pc_sel_step = tk.StringVar(value="1")
+        sp_st = ttk.Spinbox(er1, from_=1, to=64, textvariable=self.var_pc_sel_step, width=5, command=self.on_pc_load_selected_step)
+        sp_st.pack(side=tk.LEFT, padx=4)
+        sp_st.bind("<Return>", lambda _e: self.on_pc_load_selected_step())
+
+        ttk.Label(er1, text="Root Note:").pack(side=tk.LEFT, padx=(6, 2))
+        self.var_pc_step_root = tk.StringVar(value="60: C4")
+        note_choices = [f"{n}: {midi_note_name(n)}" for n in range(24, 97)]
+        ttk.Combobox(er1, textvariable=self.var_pc_step_root, values=note_choices, state="readonly", width=10).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(er1, text="Chord Builder:").pack(side=tk.LEFT, padx=(6, 2))
+        self.var_pc_step_chord = tk.StringVar(value="Single Note")
+        ttk.Combobox(
+            er1,
+            textvariable=self.var_pc_step_chord,
+            values=list(SH4dSVD.CHORD_TYPES.keys()),
+            state="readonly",
+            width=20,
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(er1, text="🎹 Fill Notes", command=self.on_pc_fill_chord_notes).pack(side=tk.LEFT, padx=3)
+
+        er2 = ttk.Frame(ed_lf)
+        er2.pack(fill=tk.X, pady=2)
+        ttk.Label(er2, text="MIDI Notes (up to 8, comma-sep):").pack(side=tk.LEFT)
+        self.var_pc_step_notes = tk.StringVar(value="60")
+        ttk.Entry(er2, textvariable=self.var_pc_step_notes, width=22).pack(side=tk.LEFT, padx=4)
+
+        ttk.Label(er2, text="Vel (1-127):").pack(side=tk.LEFT, padx=(4, 1))
+        self.var_pc_step_vel = tk.StringVar(value="100")
+        ttk.Spinbox(er2, from_=1, to=127, textvariable=self.var_pc_step_vel, width=5).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(er2, text="Gate (1-127):").pack(side=tk.LEFT, padx=(4, 1))
+        self.var_pc_step_gate = tk.StringVar(value="80")
+        ttk.Spinbox(er2, from_=1, to=127, textvariable=self.var_pc_step_gate, width=5).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(er2, text="Prob %:").pack(side=tk.LEFT, padx=(4, 1))
+        self.var_pc_step_prob = tk.StringVar(value="100")
+        ttk.Spinbox(er2, from_=0, to=100, textvariable=self.var_pc_step_prob, width=5).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(er2, text="Substep:").pack(side=tk.LEFT, padx=(4, 1))
+        self.var_pc_step_sub = tk.StringVar(value="0")
+        ttk.Spinbox(er2, from_=0, to=13, textvariable=self.var_pc_step_sub, width=4).pack(side=tk.LEFT, padx=2)
+
+        er3 = ttk.Frame(ed_lf)
+        er3.pack(fill=tk.X, pady=(4, 1))
+        ttk.Button(er3, text="✅ Write Step to Pattern", command=self.on_pc_write_step).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 3))
+        ttk.Button(er3, text="🗑️ Clear Step", command=self.on_pc_clear_single_step).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(3, 0))
+
+        # 8-Lane × 16-Step TR-Style Drum Matrix (Directly edits Part 5 Rhythm on current Page 1..16)
+        drum_lf = ttk.LabelFrame(center, text="🥁 Part 5 (Rhythm) 8-Lane × 16-Step TR Drum Matrix (Click Any Cell to Toggle Hit)", padding=4)
+        drum_lf.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+
+        for c_i in range(16):
+            lbl_c = ttk.Label(drum_lf, text=f"{c_i+1:02d}", anchor=tk.CENTER, font=("Segoe UI", 7, "bold"))
+            lbl_c.grid(row=0, column=c_i + 1, padx=1, pady=1)
+
+        self.pc_drum_grid_btns = []
+        for r_i, (d_note, d_lbl) in enumerate(self.DRUM_MATRIX_LANES):
+            ttk.Label(drum_lf, text=d_lbl, font=("Segoe UI", 7, "bold")).grid(row=r_i + 1, column=0, sticky=tk.W, padx=(2, 4))
+            row_btns = []
+            for c_i in range(16):
+                drum_lf.columnconfigure(c_i + 1, weight=1)
+                db = tk.Button(
+                    drum_lf,
+                    text="·",
+                    width=2,
+                    height=1,
+                    relief=tk.FLAT,
+                    bg="#21262d",
+                    fg="#8b949e",
+                    font=("Segoe UI", 8, "bold"),
+                    command=lambda dn=d_note, sc=c_i: self.on_pc_toggle_drum_cell(dn, sc),
+                )
+                db.grid(row=r_i + 1, column=c_i + 1, padx=1, pady=1, sticky="ew")
+                row_btns.append(db)
+            self.pc_drum_grid_btns.append((d_note, row_btns))
+
+        # RIGHT PANE: Full 64-Step Sequence Table for Active Part
+        right = ttk.LabelFrame(pw, text="📋 3. Full 64-Step Sequence Table (Active Part)", padding=6)
+        right.rowconfigure(0, weight=1)
+        right.columnconfigure(0, weight=1)
+
+        cols_pc = ("step", "notes", "vel", "gate", "prob", "sub")
+        self.tree_pc_steps = ttk.Treeview(right, columns=cols_pc, show="headings", selectmode="browse")
+        self.tree_pc_steps.heading("step", text="Step")
+        self.tree_pc_steps.column("step", width=48, anchor=tk.CENTER)
+        self.tree_pc_steps.heading("notes", text="Notes / Chord / Drum Hits")
+        self.tree_pc_steps.column("notes", width=175, anchor=tk.W)
+        self.tree_pc_steps.heading("vel", text="Vel")
+        self.tree_pc_steps.column("vel", width=40, anchor=tk.CENTER)
+        self.tree_pc_steps.heading("gate", text="Gate")
+        self.tree_pc_steps.column("gate", width=42, anchor=tk.CENTER)
+        self.tree_pc_steps.heading("prob", text="Prob")
+        self.tree_pc_steps.column("prob", width=45, anchor=tk.CENTER)
+        self.tree_pc_steps.heading("sub", text="Sub")
+        self.tree_pc_steps.column("sub", width=38, anchor=tk.CENTER)
+
+        sb_pcs = ttk.Scrollbar(right, orient=tk.VERTICAL, command=self.tree_pc_steps.yview)
+        self.tree_pc_steps.configure(yscrollcommand=sb_pcs.set)
+        self.tree_pc_steps.grid(row=0, column=0, sticky="nsew")
+        sb_pcs.grid(row=0, column=1, sticky="ns")
+        self.tree_pc_steps.bind("<<TreeviewSelect>>", self.on_pc_select_table_step)
+
+        pw.add(left, minsize=300, width=355, stretch="never")
+        pw.add(center, minsize=450, width=540, stretch="always")
+        pw.add(right, minsize=280, width=340, stretch="always")
+
+    def _get_pc_pat_idx(self) -> int:
+        raw = self.var_pc_pat.get().split(":")[0].strip()
+        return max(0, min(127, int(raw) - 1)) if raw.isdigit() else 0
+
+    def _get_pc_part_idx(self) -> int:
+        raw = self.var_pc_part.get().split(":")[0].strip()
+        return max(0, min(4, int(raw) - 1)) if raw.isdigit() else 0
+
+    def refresh_pattern_creator_tab(self):
+        if not self.svd:
+            return
+        pat_opts = []
+        for i in range(128):
+            info = self.svd.get_pattern_info(i)
+            pat_opts.append(f"{i+1}: {info['slot']} {info['name'].strip()}")
+        cur_pat = self._get_pc_pat_idx()
+        self.cb_pc_pat.config(values=pat_opts)
+        self.var_pc_pat.set(pat_opts[cur_pat])
+        self.on_pc_select_pattern()
+
+    def on_pc_select_pattern(self):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        info = self.svd.get_pattern_info(pat_idx)
+        self.var_pc_name.set(info["name"])
+        self.var_pc_bpm.set(f"{info['tempo']:.2f}")
+        self.var_pc_lvl.set(str(info["level"]))
+        self.on_pc_select_part()
+
+    def on_pc_select_part(self):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        part_idx = self._get_pc_part_idx()
+        info = self.svd.get_pattern_info(pat_idx)
+        slen = self.svd.get_part_step_length(pat_idx, part_idx)
+        self.var_pc_slen.set(str(slen))
+
+        # Populate Tone/Kit dropdown for this part
+        if part_idx < 4:
+            tone_opts = [
+                f"U{(i//16)+1:02d}-{(i%16)+1:02d} (#{i+1:03d}): {self.svd.get_patch_name(i).strip()}"
+                for i in range(256)
+            ]
+            self.cb_pc_tone.config(values=tone_opts)
+            p_data = info["parts"][part_idx]
+            if p_data["msb"] == 87 and p_data["lsb"] in (0, 1):
+                u_idx = max(0, min(255, p_data["lsb"] * 128 + p_data["pc"]))
+                self.var_pc_tone.set(tone_opts[u_idx])
+            else:
+                self.var_pc_tone.set(p_data["resolved"])
+        else:
+            kit_opts = [
+                f"UK#{i+1:02d}: {self.svd.get_kit_name(i).strip()}"
+                for i in range(64)
+            ]
+            self.cb_pc_tone.config(values=kit_opts)
+            p_data = info["parts"][4]
+            if p_data["msb"] == 86 and p_data["lsb"] == 0 and 0 <= p_data["pc"] < 64:
+                self.var_pc_tone.set(kit_opts[p_data["pc"]])
+            else:
+                self.var_pc_tone.set(p_data["resolved"])
+
+        self.refresh_pc_grid_and_table()
+
+    def refresh_pc_grid_and_table(self):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        part_idx = self._get_pc_part_idx()
+        page = self.var_pc_page.get()
+        base_step = page * 16
+        sel_step_0_63 = max(0, min(63, int(self.var_pc_sel_step.get()) - 1))
+
+        # 1. Update 16-Step Hardware Bar
+        for i in range(16):
+            s_idx = base_step + i
+            st = self.svd.get_step_info(pat_idx, part_idx, s_idx)
+            is_sel = (s_idx == sel_step_0_63)
+            if st["notes"]:
+                if part_idx == 4:
+                    tag = f"{len(st['notes'])}hit"
+                elif len(st["notes"]) > 1:
+                    tag = f"{midi_note_name(st['notes'][0])}+{len(st['notes'])-1}"
+                else:
+                    tag = midi_note_name(st["notes"][0])
+                bg = "#1f6feb" if is_sel else "#238636"
+                fg = "#ffffff"
+            else:
+                tag = "—"
+                bg = "#388bfd" if is_sel else "#21262d"
+                fg = "#ffffff" if is_sel else "#8b949e"
+            self.pc_step_btns[i].config(text=f"{s_idx+1:02d}\n{tag}", bg=bg, fg=fg)
+
+        # 2. Update 8-Lane × 16-Step Drum Matrix (always reflects Part 5 Rhythm for current page)
+        for d_note, row_btns in self.pc_drum_grid_btns:
+            for c_i in range(16):
+                s_idx = base_step + c_i
+                st_d = self.svd.get_step_info(pat_idx, 4, s_idx)
+                if d_note in st_d["notes"]:
+                    row_btns[c_i].config(
+                        text="●",
+                        bg="#d29922" if (c_i % 4 == 0) else "#2ea043",
+                        fg="#ffffff",
+                    )
+                else:
+                    row_btns[c_i].config(
+                        text="·",
+                        bg="#2d333b" if (c_i % 4 == 0) else "#21262d",
+                        fg="#8b949e",
+                    )
+
+        # 3. Update 64-Step Treeview
+        self.tree_pc_steps.delete(*self.tree_pc_steps.get_children())
+        for s in range(64):
+            st = self.svd.get_step_info(pat_idx, part_idx, s)
+            has_n = bool(st["notes"])
+            self.tree_pc_steps.insert(
+                "",
+                tk.END,
+                iid=str(s),
+                values=(
+                    f"{s+1:02d}" + (" ●" if has_n else ""),
+                    st["note_names"],
+                    st["vel"] if has_n else "—",
+                    st["gate"] if has_n else "—",
+                    f"{st['prob']}%" if has_n else "—",
+                    st["substep"] if (has_n and st["substep"] > 0) else "—",
+                ),
+            )
+
+    def _parse_step_notes_entry(self) -> list:
+        raw = self.var_pc_step_notes.get().strip()
+        notes = []
+        for tok in raw.replace(";", ",").split(","):
+            t = tok.strip()
+            if t.isdigit():
+                notes.append(max(0, min(127, int(t))))
+        return notes[:8]
+
+    def on_pc_click_step_btn(self, btn_idx_0_15: int):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        part_idx = self._get_pc_part_idx()
+        s_idx = self.var_pc_page.get() * 16 + btn_idx_0_15
+        self.var_pc_sel_step.set(str(s_idx + 1))
+
+        if self.var_pc_paint_mode.get():
+            st = self.svd.get_step_info(pat_idx, part_idx, s_idx)
+            if st["notes"]:
+                self.svd.clear_steps_content(pat_idx, part_idx, s_idx + 1, s_idx + 1)
+            else:
+                notes = self._parse_step_notes_entry() or [60]
+                vel = int(self.var_pc_step_vel.get())
+                gate = int(self.var_pc_step_gate.get())
+                prob = int(self.var_pc_step_prob.get())
+                sub = int(self.var_pc_step_sub.get())
+                self.svd.set_step_info(pat_idx, part_idx, s_idx, notes, vel=vel, gate=gate, prob=prob, substep=sub)
+            self.refresh_pc_grid_and_table()
+            self.refresh_steps_for_pattern_part()
+        else:
+            self.on_pc_load_selected_step()
+
+    def on_pc_load_selected_step(self):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        part_idx = self._get_pc_part_idx()
+        s_idx = max(0, min(63, int(self.var_pc_sel_step.get()) - 1))
+        st = self.svd.get_step_info(pat_idx, part_idx, s_idx)
+        if st["notes"]:
+            self.var_pc_step_notes.set(", ".join(str(n) for n in st["notes"]))
+            n0 = st["notes"][0]
+            if 24 <= n0 <= 96:
+                self.var_pc_step_root.set(f"{n0}: {midi_note_name(n0)}")
+            self.var_pc_step_vel.set(str(st["vel"]))
+            self.var_pc_step_gate.set(str(st["gate"]))
+            self.var_pc_step_prob.set(str(st["prob"]))
+            self.var_pc_step_sub.set(str(st["substep"]))
+        self.refresh_pc_grid_and_table()
+
+    def on_pc_select_table_step(self, _event=None):
+        sel = self.tree_pc_steps.selection()
+        if not sel:
+            return
+        s_idx = int(sel[0])
+        self.var_pc_sel_step.set(str(s_idx + 1))
+        if (s_idx // 16) != self.var_pc_page.get():
+            self.var_pc_page.set(s_idx // 16)
+        self.on_pc_load_selected_step()
+
+    def on_pc_fill_chord_notes(self):
+        root_str = self.var_pc_step_root.get().split(":")[0].strip()
+        root_n = int(root_str) if root_str.isdigit() else 60
+        c_type = self.var_pc_step_chord.get()
+        ivs = SH4dSVD.CHORD_TYPES.get(c_type, [0])
+        notes = [max(0, min(127, root_n + iv)) for iv in ivs]
+        self.var_pc_step_notes.set(", ".join(str(n) for n in notes))
+
+    def on_pc_write_step(self):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        part_idx = self._get_pc_part_idx()
+        s_idx = max(0, min(63, int(self.var_pc_sel_step.get()) - 1))
+        notes = self._parse_step_notes_entry()
+        vel = int(self.var_pc_step_vel.get())
+        gate = int(self.var_pc_step_gate.get())
+        prob = int(self.var_pc_step_prob.get())
+        sub = int(self.var_pc_step_sub.get())
+        self.svd.set_step_info(pat_idx, part_idx, s_idx, notes, vel=vel, gate=gate, prob=prob, substep=sub)
+        self.refresh_pc_grid_and_table()
+        self.refresh_steps_for_pattern_part()
+        self.lbl_pc_status.config(text=f"✅ Wrote Step {s_idx+1:02d} on Part {part_idx+1}: Notes={notes}, Vel={vel}, Gate={gate}")
+
+    def on_pc_clear_single_step(self):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        part_idx = self._get_pc_part_idx()
+        s_idx = max(0, min(63, int(self.var_pc_sel_step.get()) - 1))
+        self.svd.clear_steps_content(pat_idx, part_idx, s_idx + 1, s_idx + 1)
+        self.refresh_pc_grid_and_table()
+        self.refresh_steps_for_pattern_part()
+        self.lbl_pc_status.config(text=f"🗑️ Cleared Step {s_idx+1:02d} on Part {part_idx+1}.")
+
+    def on_pc_toggle_drum_cell(self, drum_note: int, col_0_15: int):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        s_idx = self.var_pc_page.get() * 16 + col_0_15
+        vel = int(self.var_pc_step_vel.get())
+        gate = int(self.var_pc_step_gate.get())
+        prob = int(self.var_pc_step_prob.get())
+        added = self.svd.toggle_drum_step_note(pat_idx, s_idx, drum_note, vel=vel, gate=gate, prob=prob)
+        self.refresh_pc_grid_and_table()
+        self.refresh_steps_for_pattern_part()
+        self.lbl_pc_status.config(
+            text=f"🥁 {'Added' if added else 'Removed'} Drum Note {drum_note} at Step {s_idx+1:02d} (Part 5 Rhythm)."
+        )
+
+    def on_pc_find_empty_pattern(self):
+        if not self.svd:
+            return
+        for i in range(128):
+            total_hits = sum(
+                1 for p in range(5) for s in range(64) if self.svd.get_step_info(i, p, s)["notes"]
+            )
+            if total_hits == 0:
+                opts = self.cb_pc_pat.cget("values")
+                if i < len(opts):
+                    self.var_pc_pat.set(opts[i])
+                    self.on_pc_select_pattern()
+                    self.lbl_pc_status.config(text=f"🔍 Selected first empty pattern slot: {(i//16)+1}-{(i%16)+1:02d}.")
+                return
+        messagebox.showinfo("Info", "All 128 Pattern slots already contain active steps.")
+
+    def on_pc_save_header(self):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        self.svd.set_pattern_info(
+            pat_idx,
+            name=self.var_pc_name.get(),
+            tempo=float(self.var_pc_bpm.get()),
+            level=int(self.var_pc_lvl.get()),
+        )
+        self.refresh_patterns()
+        self.refresh_pattern_creator_tab()
+        self.lbl_pc_status.config(text=f"💾 Updated Pattern {pat_idx+1} Header ('{self.var_pc_name.get()}', {self.var_pc_bpm.get()} BPM).")
+
+    def on_pc_assign_tone(self):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        part_idx = self._get_pc_part_idx()
+        info = self.svd.get_pattern_info(pat_idx)
+        parts = info["parts"]
+        sel_txt = self.var_pc_tone.get()
+        if part_idx < 4 and "(#" in sel_txt:
+            num_str = sel_txt.split("(#", 1)[1].split(")", 1)[0]
+            if num_str.isdigit():
+                u_idx = max(0, min(255, int(num_str) - 1))
+                parts[part_idx]["msb"] = 87
+                parts[part_idx]["lsb"] = u_idx // 128
+                parts[part_idx]["pc"] = u_idx % 128
+        elif part_idx == 4 and sel_txt.startswith("UK#"):
+            num_str = sel_txt[3:5]
+            if num_str.isdigit():
+                k_idx = max(0, min(63, int(num_str) - 1))
+                parts[4]["msb"] = 86
+                parts[4]["lsb"] = 0
+                parts[4]["pc"] = k_idx
+        self.svd.set_pattern_info(pat_idx, parts=parts)
+        self.refresh_patterns()
+        self.on_pc_select_part()
+        self.lbl_pc_status.config(text=f"📌 Assigned '{sel_txt}' to Pattern Part {part_idx+1}.")
+
+    def on_pc_apply_slen(self):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        part_idx = self._get_pc_part_idx()
+        slen = max(1, min(64, int(self.var_pc_slen.get())))
+        self.svd.set_part_step_length(pat_idx, part_idx, slen)
+        self.refresh_steps_for_pattern_part()
+        self.lbl_pc_status.config(text=f"📏 Set Part {part_idx+1} Step Length to {slen} steps.")
+
+    def on_pc_quick_slen(self, length_val: int):
+        self.var_pc_slen.set(str(length_val))
+        self.on_pc_apply_slen()
+
+    def on_pc_clear_part(self):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        part_idx = self._get_pc_part_idx()
+        self.svd.clear_steps_content(pat_idx, part_idx, 1, 64)
+        self.refresh_pc_grid_and_table()
+        self.refresh_steps_for_pattern_part()
+        self.lbl_pc_status.config(text=f"🧹 Cleared all 64 steps on Part {part_idx+1}.")
+
+    def on_pc_generate_full_pattern(self):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        style = self.var_pc_style.get()
+        r_key = self.var_pc_key.get()
+        scale = self.var_pc_scale.get()
+        slen = max(1, min(64, int(self.var_pc_slen.get())))
+        auto_t = bool(self.var_pc_auto_tones.get())
+        info = self.svd.generate_full_pattern(
+            pat_idx,
+            style=style,
+            root_key=r_key,
+            scale_name=scale,
+            step_len=slen,
+            auto_assign_tones=auto_t,
+        )
+        self.refresh_patterns()
+        self.refresh_pattern_creator_tab()
+        self.lbl_pc_status.config(
+            text=f"🚀 Generated Full 5-Part Pattern '{info['name']}' ({info['tempo']:.0f} BPM, {r_key} {scale}, {slen} steps) in {info['slot']}!"
+        )
+
+    def on_pc_generate_active_part(self):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        part_idx = self._get_pc_part_idx()
+        role = self.var_pc_role.get()
+        r_key = self.var_pc_key.get()
+        scale = self.var_pc_scale.get()
+        slen = max(1, min(64, int(self.var_pc_slen.get())))
+        dens = int(self.var_pc_density.get())
+        self.svd.generate_part_sequence(pat_idx, part_idx, role, r_key, scale, slen, density_pct=dens)
+        self.refresh_pc_grid_and_table()
+        self.refresh_steps_for_pattern_part()
+        self.lbl_pc_status.config(
+            text=f"✨ Generated '{role}' ({r_key} {scale}, {slen} steps) on Part {part_idx+1}."
+        )
+
+    def on_pc_apply_euclidean(self):
+        if not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        part_idx = self._get_pc_part_idx()
+        k = int(self.var_euc_k.get())
+        n = max(1, min(64, int(self.var_euc_n.get())))
+        rot = int(self.var_euc_rot.get())
+        note = max(0, min(127, int(self.var_euc_note.get())))
+        vel = int(self.var_pc_step_vel.get())
+        gate = int(self.var_pc_step_gate.get())
+        hits = SH4dSVD.compute_euclidean_hits(k, n, rot)
+        self.svd.set_part_step_length(pat_idx, part_idx, n)
+        self.var_pc_slen.set(str(n))
+        for s in range(n):
+            if part_idx == 4:
+                # Toggle/set this specific drum instrument on Rhythm Part 5 without wiping other drum lanes
+                st = self.svd.get_step_info(pat_idx, 4, s)
+                cur_n = [x for x in st["notes"] if x != note]
+                if hits[s]:
+                    cur_n.append(note)
+                self.svd.set_step_info(pat_idx, 4, s, cur_n, vel=vel, gate=gate)
+            else:
+                self.svd.set_step_info(pat_idx, part_idx, s, [note] if hits[s] else [], vel=vel, gate=gate)
+        self.refresh_pc_grid_and_table()
+        self.refresh_steps_for_pattern_part()
+        self.lbl_pc_status.config(text=f"📐 Applied Euclidean E({k}, {n}, rot={rot}) with Note {note} on Part {part_idx+1}.")
+
+    def on_pc_toggle_live_play(self):
+        if self.pat_play_running:
+            self.pat_play_running = False
+            if self.pat_play_after_id:
+                try:
+                    self.after_cancel(self.pat_play_after_id)
+                except Exception:
+                    pass
+                self.pat_play_after_id = None
+            self.btn_pc_play.config(text="▶️ Play Pattern Live (MIDI)")
+            self.lbl_pc_status.config(text="⏹️ Stopped live MIDI pattern playback.")
+            return
+        if not self.svd:
+            return
+        self.pat_play_running = True
+        self.pat_play_step = 0
+        self.btn_pc_play.config(text="⏹️ Stop Pattern Playback")
+        self._tick_pc_live_play()
+
+    def _tick_pc_live_play(self):
+        if not self.pat_play_running or not self.svd:
+            return
+        pat_idx = self._get_pc_pat_idx()
+        try:
+            bpm = max(40.0, min(260.0, float(self.var_pc_bpm.get())))
+        except ValueError:
+            bpm = 128.0
+        step_ms = int(round((60000.0 / bpm) / 4.0))
+        gate_ms = max(35, int(step_ms * 0.72))
+
+        # CIHAZLARIM.md SH-4d 5-Part MIDI Channels: Synth 1..4 = Ch 8, 9, 11, 12; Rhythm = Ch 13
+        part_channels = [8, 9, 11, 12, 13]
+        notes_to_off = []
+        for p_i in range(5):
+            slen = self.svd.get_part_step_length(pat_idx, p_i)
+            s_idx = self.pat_play_step % slen
+            st = self.svd.get_step_info(pat_idx, p_i, s_idx)
+            ch = part_channels[p_i]
+            for n_i, n_val in enumerate(st["notes"]):
+                prob = st["probs"][n_i] if n_i < len(st["probs"]) else 100
+                if prob >= 100 or random.randint(1, 100) <= prob:
+                    vel = st["vels"][n_i] if n_i < len(st["vels"]) else 100
+                    self.midi.send_note_on(ch, n_val, vel)
+                    notes_to_off.append((ch, n_val))
+
+        if notes_to_off:
+            self.after(gate_ms, lambda pairs=notes_to_off: [self.midi.send_note_off(c, n) for c, n in pairs])
+
+        self.pat_play_step = (self.pat_play_step + 1) % 64
+        self.pat_play_after_id = self.after(step_ms, self._tick_pc_live_play)
 
 
 def print_summary(svd: SH4dSVD):
