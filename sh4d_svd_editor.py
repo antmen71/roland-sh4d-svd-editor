@@ -207,6 +207,93 @@ class SH4dSVD:
         27: "27: STEP / HARMONIC",
     }
 
+    OSC_MODEL_SPECS = {
+        16: {
+            "title": "SH-4d Engine — 4 Independent VA Oscillators (OSC 1–4)",
+            "active_oscs": 4,
+            "osc_names": ["OSC 1:", "OSC 2:", "OSC 3:", "OSC 4:"],
+            "sliders": ["S1 (OSC1 Lvl):", "S2 (OSC2 Lvl):", "S3 (OSC3 Lvl):", "S4 (OSC4 Lvl):"],
+            "info": "4 full oscillators active. Sliders 1–4 control OSC 1–4 mixer levels.",
+        },
+        17: {
+            "title": "SH-3D Engine — 3 VA Oscillators (OSC 1–3) + 2nd Fast LFO",
+            "active_oscs": 3,
+            "osc_names": ["OSC 1:", "OSC 2:", "OSC 3:"],
+            "sliders": ["S1 (OSC1 Lvl):", "S2 (OSC2 Lvl):", "S3 (OSC3 Lvl):", "S4 (2nd LFO):"],
+            "info": "3 oscillators active (OSC 4 is replaced by the 2nd Fast LFO on Slider 4).",
+        },
+        18: {
+            "title": "CHORD Engine — 1 Master Chord Poly-Oscillator",
+            "active_oscs": 1,
+            "osc_names": ["Chord OSC:"],
+            "sliders": ["S1 (Note 1):", "S2 (Note 2):", "S3 (Note 3):", "S4 (Note 4):"],
+            "info": "Single Chord Engine. Sliders 1–4 balance the 4 chord notes/inversions.",
+        },
+        19: {
+            "title": "SH-101 Engine — 1 Classic Monophonic Oscillator + Sub + Noise",
+            "active_oscs": 1,
+            "osc_names": ["SH-101 OSC:"],
+            "sliders": ["S1 (Saw Lvl):", "S2 (Sqr Lvl):", "S3 (Sub Lvl):", "S4 (Noise Lvl):"],
+            "info": "Single SH-101 oscillator. Sliders 1–4 mix Saw, Square/PW, Sub-Osc & Noise.",
+        },
+        20: {
+            "title": "JUNO-106 Engine — 1 Classic DCO + Sub-Osc + Noise",
+            "active_oscs": 1,
+            "osc_names": ["JUNO DCO:"],
+            "sliders": ["S1 (Saw Lvl):", "S2 (Pulse Lvl):", "S3 (Sub Lvl):", "S4 (Noise Lvl):"],
+            "info": "Single JUNO-106 DCO. Sliders 1–4 mix Saw, Pulse/PWM, Sub-Osc & Noise.",
+        },
+        21: {
+            "title": "CROSS FM Engine — 2-Operator FM (Carrier + Modulator)",
+            "active_oscs": 2,
+            "osc_names": ["OP1 (Carrier):", "OP2 (Modulator):"],
+            "sliders": ["S1 (Mod Ratio):", "S2 (FM Depth):", "S3 (Feedback):", "S4 (Harmonics):"],
+            "info": "2 FM Operators active (OSC 3–4 unused). Sliders 1–4 control FM Ratio, Depth & Feedback.",
+        },
+        22: {
+            "title": "SYNC Engine — 2 Hard-Synced Oscillators (Master + Slave)",
+            "active_oscs": 2,
+            "osc_names": ["OSC 1 (Master):", "OSC 2 (Slave):"],
+            "sliders": ["S1 (Sync Pitch):", "S2 (Env Dep):", "S3 (OSC1 Lvl):", "S4 (Sync Lvl):"],
+            "info": "2 Oscillators active (Master OSC 1 & Synced Slave OSC 2; OSC 3–4 unused).",
+        },
+        23: {
+            "title": "DRAWING Engine — 1 Custom 32-Step Drawn Wave Oscillator",
+            "active_oscs": 1,
+            "osc_names": ["Drawn Wave:"],
+            "sliders": ["S1 (Wave Morph):", "S2 (Wave Edge):", "S3 (Sub Lvl):", "S4 (Noise Lvl):"],
+            "info": "1 Custom 32-Step Waveform Oscillator (0x674..0x693) + Wave Edge (0x698).",
+        },
+        24: {
+            "title": "WAVETABLE Engine — Wavetable Oscillator + Sub Oscillator",
+            "active_oscs": 2,
+            "osc_names": ["Wavetable OSC:", "Sub / Mod OSC:"],
+            "sliders": ["S1 (Wave Pos):", "S2 (Harmonics):", "S3 (Sub Lvl):", "S4 (Noise Lvl):"],
+            "info": "Wavetable Oscillator + Sub Oscillator (OSC 3–4 unused). Slider 1 scans Wavetable position.",
+        },
+        25: {
+            "title": "RING Engine — 2 Ring-Modulated Oscillators (OSC 1 × OSC 2)",
+            "active_oscs": 2,
+            "osc_names": ["OSC 1 (Ring A):", "OSC 2 (Ring B):"],
+            "sliders": ["S1 (X-Fade):", "S2 (OSC1 Lvl):", "S3 (OSC2 Lvl):", "S4 (Ring Mod):"],
+            "info": "2 Oscillators active in Ring Modulation (OSC 3–4 unused).",
+        },
+        26: {
+            "title": "PCM Engine — 4 Sample-Based PCM Partials (PCM 1–4)",
+            "active_oscs": 4,
+            "osc_names": ["PCM 1:", "PCM 2:", "PCM 3:", "PCM 4:"],
+            "sliders": ["S1 (PCM1 Lvl):", "S2 (PCM2 Lvl):", "S3 (PCM3 Lvl):", "S4 (PCM4 Lvl):"],
+            "info": "4 PCM Sample Partials active. Sliders 1–4 control PCM 1–4 mixer levels.",
+        },
+        27: {
+            "title": "STEP Engine — 2 Oscillators + 16-Step Sequenced LFO",
+            "active_oscs": 2,
+            "osc_names": ["Step OSC 1:", "Step OSC 2:"],
+            "sliders": ["S1 (OSC1 Lvl):", "S2 (OSC2 Lvl):", "S3 (Step Mod):", "S4 (Sub/Noise):"],
+            "info": "2 Oscillators driven by the 16-Step Sequencer (0x410..0x42F; OSC 3–4 unused).",
+        },
+    }
+
     OSC_WAVEFORMS = {
         0: "0: OFF",
         1: "1: SAW",
@@ -541,11 +628,14 @@ class SH4dSVD:
             if "lfo_amp" in kw and kw["lfo_amp"] is not None:
                 self.data[l_base + 0x15] = u8_from_s8(max(-64, min(63, int(kw["lfo_amp"]))))
 
-    def get_patch_searchable_list(self, idx: int) -> list:
-        """Returns list of dicts: {key, category, name, offset, value, range} for all patch parameters."""
+    def get_patch_searchable_list(self, idx: int, override_model: int = None) -> list:
+        """Returns list of tuples: (key, category, name, offset, value, range) adapted to the active OSC Model."""
         pr = self.get_patch_params(idx)
+        model_id = override_model if override_model is not None else pr["osc_model"]
+        spec = self.OSC_MODEL_SPECS.get(model_id, self.OSC_MODEL_SPECS[16])
+        s_lbls = [s.replace(":", "") for s in spec["sliders"]]
         rows = [
-            ("osc_model", "Voicing & Common", "OSC Model ID", "0x008", pr["osc_model"], "16..27"),
+            ("osc_model", "Voicing & Common", "OSC Model ID", "0x008", model_id, "16..27"),
             ("category", "Voicing & Common", "Tone Category ID", "0x020", pr["category"], "0..44"),
             ("patch_level", "Voicing & Common", "Patch Level", "0x024", pr["patch_level"], "0..127"),
             ("coarse_tune", "Voicing & Common", "Tone Coarse Tune (Semitones)", "0x029", pr["coarse_tune"], "-48..+48"),
@@ -556,23 +646,24 @@ class SH4dSVD:
             ("porta_time", "Voicing & Common", "Portamento Time", "0x036", pr["porta_time"], "0..1023"),
             ("bend_up", "Voicing & Common", "Pitch Bend Range Up (Semitones)", "0x038", pr["bend_up"], "0..48"),
             ("bend_down", "Voicing & Common", "Pitch Bend Range Down (Semitones)", "0x039", pr["bend_down"], "0..48"),
-            ("slider1", "OSC 1-4", "OSC 1 Mixer Level (Slider 1)", "0x0D8", pr["slider1"], "0..127"),
-            ("slider2", "OSC 1-4", "OSC 2 Mixer Level (Slider 2)", "0x154", pr["slider2"], "0..127"),
-            ("slider3", "OSC 1-4", "OSC 3 Mixer Level (Slider 3)", "0x1D0", pr["slider3"], "0..127"),
-            ("slider4", "OSC 1-4", "OSC 4 Mixer Level (Slider 4)", "0x24C", pr["slider4"], "0..127"),
+            ("slider1", "OSC 1-4", f"Slider 1 — {s_lbls[0]}", "0x0D8", pr["slider1"], "0..127"),
+            ("slider2", "OSC 1-4", f"Slider 2 — {s_lbls[1]}", "0x154", pr["slider2"], "0..127"),
+            ("slider3", "OSC 1-4", f"Slider 3 — {s_lbls[2]}", "0x1D0", pr["slider3"], "0..127"),
+            ("slider4", "OSC 1-4", f"Slider 4 — {s_lbls[3]}", "0x24C", pr["slider4"], "0..127"),
         ]
-        for o in range(4):
+        for o in range(spec["active_oscs"]):
             od = pr["oscs"][o]
+            o_title = spec["osc_names"][o].replace(":", "")
             base_hex = f"0x{0x720 + o * 44:03X}"
             rows.extend(
                 [
-                    (f"osc{o+1}_wave", "OSC 1-4", f"OSC {o+1} Waveform ID", base_hex, od["wave"], "0..255"),
-                    (f"osc{o+1}_coarse", "OSC 1-4", f"OSC {o+1} Coarse Tune (Semi)", f"0x{0x721 + o * 44:03X}", od["coarse"], "-24..+24"),
-                    (f"osc{o+1}_fine", "OSC 1-4", f"OSC {o+1} Fine Tune (Cents)", f"0x{0x722 + o * 44:03X}", od["fine"], "-50..+50"),
-                    (f"osc{o+1}_pw", "OSC 1-4", f"OSC {o+1} Pulse Width", f"0x{0x723 + o * 44:03X}", od["pw"], "0..63"),
-                    (f"osc{o+1}_pwm", "OSC 1-4", f"OSC {o+1} PWM Depth", f"0x{0x724 + o * 44:03X}", od["pwm"], "0..63"),
-                    (f"osc{o+1}_fat", "OSC 1-4", f"OSC {o+1} Fat / SuperSAW Detune", f"0x{0x725 + o * 44:03X}", od["fat"], "0..127"),
-                    (f"osc{o+1}_pan", "OSC 1-4", f"OSC {o+1} Pan (64=Center)", f"0x{0x726 + o * 44:03X}", od["pan"], "0..127"),
+                    (f"osc{o+1}_wave", "OSC 1-4", f"{o_title} Waveform ID", base_hex, od["wave"], "0..255"),
+                    (f"osc{o+1}_coarse", "OSC 1-4", f"{o_title} Coarse Tune (Semi)", f"0x{0x721 + o * 44:03X}", od["coarse"], "-24..+24"),
+                    (f"osc{o+1}_fine", "OSC 1-4", f"{o_title} Fine Tune (Cents)", f"0x{0x722 + o * 44:03X}", od["fine"], "-50..+50"),
+                    (f"osc{o+1}_pw", "OSC 1-4", f"{o_title} Pulse Width", f"0x{0x723 + o * 44:03X}", od["pw"], "0..63"),
+                    (f"osc{o+1}_pwm", "OSC 1-4", f"{o_title} PWM Depth", f"0x{0x724 + o * 44:03X}", od["pwm"], "0..63"),
+                    (f"osc{o+1}_fat", "OSC 1-4", f"{o_title} Fat / SuperSAW Detune", f"0x{0x725 + o * 44:03X}", od["fat"], "0..127"),
+                    (f"osc{o+1}_pan", "OSC 1-4", f"{o_title} Pan (64=Center)", f"0x{0x726 + o * 44:03X}", od["pan"], "0..127"),
                 ]
             )
         rows.extend(
@@ -2134,9 +2225,11 @@ class SH4dEditorApp(tk.Tk):
             g_frm,
             textvariable=self.var_p_osc,
             values=[f"{k}: {v.split(': ')[1]}" for k, v in SH4dSVD.OSC_MODELS.items()],
-            width=18,
+            width=22,
+            state="readonly",
         )
         self.cb_osc_model.pack(side=tk.LEFT, padx=4)
+        self.cb_osc_model.bind("<<ComboboxSelected>>", self.on_osc_model_changed)
 
         # Sub-Notebook with 5 clean tabs inside the Right Panel
         self.nb_patch_sub = ttk.Notebook(right)
@@ -2154,11 +2247,15 @@ class SH4dEditorApp(tk.Tk):
         ttk.Entry(m_top, textvariable=self.var_p_mfx, width=6).pack(side=tk.LEFT, padx=4)
 
         ttk.Separator(st_main, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=4)
-        ttk.Label(st_main, text="OSC Mixer Sliders 1–4 (0..127):", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
+        self.lbl_sliders_hdr = ttk.Label(st_main, text="OSC Mixer Sliders 1–4 (0..127):", font=("Segoe UI", 9, "bold"))
+        self.lbl_sliders_hdr.pack(anchor=tk.W)
         s_frm = ttk.Frame(st_main)
         s_frm.pack(fill=tk.X, pady=2)
+        self.lbl_slider_names = []
         for i, var in enumerate([self.var_p_s1, self.var_p_s2, self.var_p_s3, self.var_p_s4], start=1):
-            ttk.Label(s_frm, text=f"S{i}:").pack(side=tk.LEFT, padx=(6 if i > 1 else 0, 2))
+            lbl_s = ttk.Label(s_frm, text=f"S{i}:")
+            lbl_s.pack(side=tk.LEFT, padx=(6 if i > 1 else 0, 2))
+            self.lbl_slider_names.append(lbl_s)
             ttk.Entry(s_frm, textvariable=var, width=5).pack(side=tk.LEFT)
 
         ttk.Separator(st_main, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=4)
@@ -2245,16 +2342,25 @@ class SH4dEditorApp(tk.Tk):
         ttk.Label(vr3, text="Bend Dn (0-48):").pack(side=tk.LEFT)
         ttk.Entry(vr3, textvariable=self.var_p_benddn, width=4).pack(side=tk.LEFT, padx=2)
 
-        o_lf = ttk.LabelFrame(st_osc, text="Individual Oscillators 1–4 (0x720..0x7CF)", padding=5)
-        o_lf.pack(fill=tk.BOTH, expand=True)
+        self.o_lf = ttk.LabelFrame(st_osc, text="Individual Oscillators 1–4 (0x720..0x7CF)", padding=5)
+        self.o_lf.pack(fill=tk.BOTH, expand=True)
+
+        self.lbl_osc_model_info = ttk.Label(
+            self.o_lf,
+            text="4 full oscillators active. Sliders 1–4 control OSC 1–4 mixer levels.",
+            font=("Segoe UI", 8, "bold"),
+        )
+        self.lbl_osc_model_info.grid(row=0, column=0, columnspan=8, sticky=tk.W, pady=(0, 4))
 
         headers_o = ["OSC", "Wave ID", "Coarse", "Fine", "PW", "PWM", "Fat/Det", "Pan"]
         for col_i, h_txt in enumerate(headers_o):
-            ttk.Label(o_lf, text=h_txt, font=("Segoe UI", 8, "bold")).grid(row=0, column=col_i, padx=3, pady=2)
+            ttk.Label(self.o_lf, text=h_txt, font=("Segoe UI", 8, "bold")).grid(row=1, column=col_i, padx=3, pady=2)
 
         self.osc_deep_vars = []
+        self.osc_row_widgets = []
         for o_i in range(4):
-            ttk.Label(o_lf, text=f"OSC {o_i+1}:", font=("Segoe UI", 8, "bold")).grid(row=o_i + 1, column=0, padx=3, pady=3, sticky=tk.W)
+            lbl_o = ttk.Label(self.o_lf, text=f"OSC {o_i+1}:", font=("Segoe UI", 8, "bold"))
+            lbl_o.grid(row=o_i + 2, column=0, padx=3, pady=3, sticky=tk.W)
             vw = tk.StringVar()
             vc = tk.StringVar()
             vf = tk.StringVar()
@@ -2262,15 +2368,20 @@ class SH4dEditorApp(tk.Tk):
             vpwm = tk.StringVar()
             vfat = tk.StringVar()
             vpan = tk.StringVar()
+            row_entries = []
             for col_i, v in enumerate([vw, vc, vf, vpw, vpwm, vfat, vpan], start=1):
-                ttk.Entry(o_lf, textvariable=v, width=6).grid(row=o_i + 1, column=col_i, padx=2, pady=3)
+                ent = ttk.Entry(self.o_lf, textvariable=v, width=6)
+                ent.grid(row=o_i + 2, column=col_i, padx=2, pady=3)
+                row_entries.append(ent)
             self.osc_deep_vars.append((vw, vc, vf, vpw, vpwm, vfat, vpan))
+            self.osc_row_widgets.append((lbl_o, row_entries))
 
-        ttk.Label(
-            o_lf,
+        self.lbl_osc_wave_help = ttk.Label(
+            self.o_lf,
             text="Wave IDs: 1=SAW, 2=SQR, 3=TRI, 4=SINE, 5=RAMP, 6=JUNO, 7=TRI2, 10=SuperSAW, 11=NOISE",
             font=("Segoe UI", 7),
-        ).grid(row=6, column=0, columnspan=8, sticky=tk.W, pady=(6, 0))
+        )
+        self.lbl_osc_wave_help.grid(row=7, column=0, columnspan=8, sticky=tk.W, pady=(6, 0))
 
         # --- SUB-TAB 3: MODULATION MATRIX (4 SLOTS) ---
         st_mtx = ttk.Frame(self.nb_patch_sub, padding=6)
@@ -3035,6 +3146,39 @@ class SH4dEditorApp(tk.Tk):
         self.var_p_lpitch.set(str(pr["lfo_pitch"]))
         self.var_p_lflt.set(str(pr["lfo_flt"]))
         self.var_p_lamp.set(str(pr["lfo_amp"]))
+        self.on_osc_model_changed()
+
+    def _get_selected_osc_model_id(self) -> int:
+        osc_str = self.var_p_osc.get().split(":")[0].strip()
+        return int(osc_str) if osc_str.isdigit() else 16
+
+    def on_osc_model_changed(self, _event=None):
+        """Dynamically updates Slider 1-4 labels, Sub-Tab 2 Oscillator count/rows, and Search table for the selected OSC Model."""
+        model_id = self._get_selected_osc_model_id()
+        spec = SH4dSVD.OSC_MODEL_SPECS.get(model_id, SH4dSVD.OSC_MODEL_SPECS[16])
+
+        # 1. Update Slider 1-4 labels in Sub-Tab 1 (Main)
+        for i, lbl_w in enumerate(self.lbl_slider_names):
+            lbl_w.config(text=spec["sliders"][i])
+
+        # 2. Update Sub-Tab 2 tab label, frame title, info banner & visible oscillator rows
+        active_n = spec["active_oscs"]
+        self.nb_patch_sub.tab(1, text=f"🌊 2. OSC ({active_n}-OSC) & Voicing")
+        self.o_lf.config(text=spec["title"])
+        self.lbl_osc_model_info.config(text=spec["info"])
+
+        for o_i, (lbl_o, row_entries) in enumerate(self.osc_row_widgets):
+            if o_i < active_n:
+                lbl_o.config(text=spec["osc_names"][o_i])
+                lbl_o.grid(row=o_i + 2, column=0, padx=3, pady=3, sticky=tk.W)
+                for col_i, ent in enumerate(row_entries, start=1):
+                    ent.grid(row=o_i + 2, column=col_i, padx=2, pady=3)
+            else:
+                lbl_o.grid_remove()
+                for ent in row_entries:
+                    ent.grid_remove()
+
+        # 3. Refresh Search All table with the selected OSC Model's active oscillators and slider names
         self.refresh_patch_search_table()
 
     def refresh_patch_search_table(self):
@@ -3044,7 +3188,7 @@ class SH4dEditorApp(tk.Tk):
         idx = int(sel[0])
         q = self.var_param_search.get().strip().lower()
         cat_f = self.var_param_cat_filter.get()
-        rows = self.svd.get_patch_searchable_list(idx)
+        rows = self.svd.get_patch_searchable_list(idx, override_model=self._get_selected_osc_model_id())
         prev = self.tree_param_search.selection()
         self.tree_param_search.delete(*self.tree_param_search.get_children())
         for key, cat, name, off_hex, val, rng in rows:
@@ -3110,7 +3254,9 @@ class SH4dEditorApp(tk.Tk):
             "lfo_amp": self.var_p_lamp,
         }
         if key == "osc_model":
-            self.var_p_osc.set(str(new_val))
+            lbl = SH4dSVD.OSC_MODELS.get(new_val, f"{new_val}: Model")
+            self.var_p_osc.set(lbl)
+            self.on_osc_model_changed()
         elif key in direct_var_map:
             direct_var_map[key].set(str(new_val))
         elif key.startswith("osc") and "_" in key:
@@ -3211,7 +3357,7 @@ class SH4dEditorApp(tk.Tk):
         )
         self.refresh_patches()
         self.refresh_patterns()
-        self.refresh_patch_search_table()
+        self.on_osc_model_changed()
 
     def on_swap_patch(self):
         sel = self.tree_patch.selection()
