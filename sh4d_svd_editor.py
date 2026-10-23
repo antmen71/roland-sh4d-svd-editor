@@ -309,6 +309,22 @@ class SH4dSVD:
         11: "11: NOISE",
     }
 
+    # Hardware-verified MFX blocks (mfx_type -> 16 int16 parameters with valid 127 Output Level)
+    HARDWARE_MFX_PRESETS = {
+        0: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        4: [3, 3, 0, 18, 18, 127, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        12: [50, 0, 15, 15, 127, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        17: [80, 45, 0, 15, 15, 50, 127, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        26: [20, 0, 14, 18, 6, 0, 30, 20, 50, 127, 0, 0, 0, 0, 0, 0],
+        33: [0, 32, 60, 0, 5, 4, 35, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        34: [32, 64, 2, 3, 17, 15, 34, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        73: [1, 0, 20, 18, 127, 85, 122, 0, 0, 1, 100, 0, 0, 0, 0, 0],
+        75: [0, 500, 12, 74, 17, 127, 0, 127, 127, 15, 15, 10, 127, 0, 0, 0],
+        84: [0, 110, 0, 200, 3, 200, 0, 4, 4000, 0, 4, 1000, 0, 5, -240, 0],
+        87: [0, 0, 50, 127, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        92: [-200, 12, -154, 12, 300, 700, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    }
+
     MATRIX_SOURCES = {
         0: "0: LFO",
         52: "52: Pitch Env",
@@ -493,13 +509,18 @@ class SH4dSVD:
         if "patch_level" in kw and kw["patch_level"] is not None:
             self.data[off + 0x24] = max(0, min(127, int(kw["patch_level"])))
         if "mfx_type" in kw and kw["mfx_type"] is not None:
-            self.data[off + 0x50] = max(0, min(127, int(kw["mfx_type"])))
+            new_mfx = max(0, min(127, int(kw["mfx_type"])))
+            old_mfx = self.data[off + 0x50]
+            self.data[off + 0x50] = new_mfx
+            if new_mfx != old_mfx and ("mfx_params" not in kw or kw["mfx_params"] is None):
+                if new_mfx in self.HARDWARE_MFX_PRESETS:
+                    for i, val in enumerate(self.HARDWARE_MFX_PRESETS[new_mfx]):
+                        self.data[off + 0x60 + i * 2 : off + 0x62 + i * 2] = struct.pack("<h", int(val))
         if "mfx_sw" in kw and kw["mfx_sw"] is not None:
             self.data[off + 0x51] = max(0, min(1, int(kw["mfx_sw"])))
-        if "mfx_cho" in kw and kw["mfx_cho"] is not None:
-            self.data[off + 0x52] = max(0, min(127, int(kw["mfx_cho"])))
-        if "mfx_rev" in kw and kw["mfx_rev"] is not None:
-            self.data[off + 0x53] = max(0, min(127, int(kw["mfx_rev"])))
+        # CRITICAL: 0x52 and 0x53 are MFX Dry/Output Level (127 in all hardware patches; <127 attenuates/mutes output!)
+        self.data[off + 0x52] = 127
+        self.data[off + 0x53] = 127
         if "mfx_params" in kw and kw["mfx_params"] is not None:
             for i, val in enumerate(kw["mfx_params"][:16]):
                 self.data[off + 0x60 + i * 2 : off + 0x62 + i * 2] = struct.pack(
@@ -579,19 +600,23 @@ class SH4dSVD:
                             pm_base = off + 0x114 + p * 0x7C + sl * 12
                             self.data[pm_base + (d_i - 1) * 2 + 2] = dep_u8
 
-        # Filter parameters written across all 4 Partials (stride 0x7C = 124)
+        # Filter parameters written across all 4 Partials (stride 0x7C = 124) AND Master Tone Macro (0x6AF, 0x6BC, 0x6BE)
         for p in range(4):
             p_base = off + 0x100 + p * 0x7C
             if "cutoff" in kw and kw["cutoff"] is not None:
                 val = max(0, min(1023, int(kw["cutoff"])))
                 self.data[p_base : p_base + 2] = struct.pack("<H", val)
+                self.data[off + 0x6BC : off + 0x6BE] = struct.pack("<H", val)
             if "flt_env_depth" in kw and kw["flt_env_depth"] is not None:
-                self.data[p_base + 2] = max(0, min(255, int(kw["flt_env_depth"])))
+                fenv_val = max(0, min(255, int(kw["flt_env_depth"])))
+                self.data[p_base + 2] = fenv_val
+                self.data[off + 0x6AF] = fenv_val
             if "resonance" in kw and kw["resonance"] is not None:
                 val = max(0, min(1023, int(kw["resonance"])))
                 self.data[p_base + 6 : p_base + 8] = struct.pack("<H", val)
+                self.data[off + 0x6BE : off + 0x6C0] = struct.pack("<H", val)
 
-        # Amp ADSR written across all 4 Partials (stride 0x18 = 24)
+        # Amp ADSR written across all 4 Partials (stride 0x18 = 24) AND Master Tone Macro (0x6C2..0x6C9)
         # CRITICAL: a_base + 1 (0x329, 0x341, 0x359, 0x371) is Partial Amp Output Enable (MUST BE 1)!
         # Amp Attack is at a_base + 6 (0x32E), Decay at +10 (0x332), Sustain at +12 (0x334), Release at +20 (0x33C).
         for p in range(4):
@@ -600,15 +625,23 @@ class SH4dSVD:
             self.data[a_base + 16 : a_base + 18] = struct.pack("<H", 1023)
             self.data[a_base + 18 : a_base + 20] = struct.pack("<H", 1023)
             if "amp_atk" in kw and kw["amp_atk"] is not None:
-                self.data[a_base + 6 : a_base + 8] = struct.pack("<H", max(0, min(1023, int(kw["amp_atk"]))))
+                v_aa = max(0, min(1023, int(kw["amp_atk"])))
+                self.data[a_base + 6 : a_base + 8] = struct.pack("<H", v_aa)
+                self.data[off + 0x6C2 : off + 0x6C4] = struct.pack("<H", v_aa)
             if "amp_dec" in kw and kw["amp_dec"] is not None:
-                self.data[a_base + 10 : a_base + 12] = struct.pack("<H", max(0, min(1023, int(kw["amp_dec"]))))
+                v_ad = max(0, min(1023, int(kw["amp_dec"])))
+                self.data[a_base + 10 : a_base + 12] = struct.pack("<H", v_ad)
+                self.data[off + 0x6C4 : off + 0x6C6] = struct.pack("<H", v_ad)
             if "amp_sus" in kw and kw["amp_sus"] is not None:
-                self.data[a_base + 12 : a_base + 14] = struct.pack("<H", max(0, min(1023, int(kw["amp_sus"]))))
+                v_as = max(0, min(1023, int(kw["amp_sus"])))
+                self.data[a_base + 12 : a_base + 14] = struct.pack("<H", v_as)
+                self.data[off + 0x6C8 : off + 0x6CA] = struct.pack("<H", v_as)
             if "amp_rel" in kw and kw["amp_rel"] is not None:
-                self.data[a_base + 20 : a_base + 22] = struct.pack("<H", max(0, min(1023, int(kw["amp_rel"]))))
+                v_ar = max(0, min(1023, int(kw["amp_rel"])))
+                self.data[a_base + 20 : a_base + 22] = struct.pack("<H", v_ar)
+                self.data[off + 0x6C6 : off + 0x6C8] = struct.pack("<H", v_ar)
 
-        # Filter ADSR written across all 4 Partials (stride 0x10 = 16)
+        # Filter ADSR written across all 4 Partials (stride 0x10 = 16) AND Master Tone Macro (0x6A6..0x6AD)
         # CRITICAL: f_base + 2 (0x38A) is Filter Attack, f_base + 4 (0x38C) is Filter Slope/Enable (30),
         # f_base + 6 (0x38E) is Filter Decay, f_base + 8 (0x390) is Filter Sustain,
         # f_base + 10..13 (0x392..0x395) are Filter Peak Levels (1023), f_base + 14 (0x396) is Filter Release.
@@ -619,13 +652,21 @@ class SH4dSVD:
             self.data[f_base + 10 : f_base + 12] = struct.pack("<H", 1023)
             self.data[f_base + 12 : f_base + 14] = struct.pack("<H", 1023)
             if "flt_atk" in kw and kw["flt_atk"] is not None:
-                self.data[f_base + 2 : f_base + 4] = struct.pack("<H", max(0, min(1023, int(kw["flt_atk"]))))
+                v_fa = max(0, min(1023, int(kw["flt_atk"])))
+                self.data[f_base + 2 : f_base + 4] = struct.pack("<H", v_fa)
+                self.data[off + 0x6A6 : off + 0x6A8] = struct.pack("<H", v_fa)
             if "flt_dec" in kw and kw["flt_dec"] is not None:
-                self.data[f_base + 6 : f_base + 8] = struct.pack("<H", max(0, min(1023, int(kw["flt_dec"]))))
+                v_fd = max(0, min(1023, int(kw["flt_dec"])))
+                self.data[f_base + 6 : f_base + 8] = struct.pack("<H", v_fd)
+                self.data[off + 0x6A8 : off + 0x6AA] = struct.pack("<H", v_fd)
             if "flt_sus" in kw and kw["flt_sus"] is not None:
-                self.data[f_base + 8 : f_base + 10] = struct.pack("<H", max(0, min(1023, int(kw["flt_sus"]))))
+                v_fs = max(0, min(1023, int(kw["flt_sus"])))
+                self.data[f_base + 8 : f_base + 10] = struct.pack("<H", v_fs)
+                self.data[off + 0x6AC : off + 0x6AE] = struct.pack("<H", v_fs)
             if "flt_rel" in kw and kw["flt_rel"] is not None:
-                self.data[f_base + 14 : f_base + 16] = struct.pack("<H", max(0, min(1023, int(kw["flt_rel"]))))
+                v_fr = max(0, min(1023, int(kw["flt_rel"])))
+                self.data[f_base + 14 : f_base + 16] = struct.pack("<H", v_fr)
+                self.data[off + 0x6AA : off + 0x6AC] = struct.pack("<H", v_fr)
 
         # LFO written across all 4 Partials (stride 0x68 = 104)
         for p in range(4):
@@ -1308,7 +1349,7 @@ class SH4dSVD:
                 amp_dec=random.randint(380, 680),
                 amp_sus=random.randint(450, 880),
                 amp_rel=random.randint(120, 260),
-                mfx_type=random.choice([19, 20, 21, 35]),
+                mfx_type=random.choice([33, 34, 84, 87]),
                 mfx_sw=1,
                 mfx_cho=random.randint(0, 30),
                 mfx_rev=random.randint(10, 45),
@@ -1358,7 +1399,7 @@ class SH4dSVD:
                 lfo_shape=0,
                 lfo_rate=random.randint(120, 340),
                 lfo_flt=random.randint(-28, 28),
-                mfx_type=random.choice([3, 19, 25]),
+                mfx_type=random.choice([4, 33, 73, 87]),
                 mfx_sw=1,
                 mfx_cho=random.randint(40, 95),
                 mfx_rev=random.randint(10, 35),
@@ -1408,7 +1449,7 @@ class SH4dSVD:
                 lfo_shape=1,
                 lfo_rate=random.randint(90, 260),
                 lfo_flt=random.randint(-18, 18),
-                mfx_type=random.choice([25, 26, 28, 32]),
+                mfx_type=random.choice([26, 75, 87, 92]),
                 mfx_sw=1,
                 mfx_cho=random.randint(70, 120),
                 mfx_rev=random.randint(75, 125),
@@ -1448,7 +1489,7 @@ class SH4dSVD:
                 amp_dec=random.randint(280, 560),
                 amp_sus=random.randint(160, 440),
                 amp_rel=random.randint(240, 520),
-                mfx_type=45 if is_dub else 25,
+                mfx_type=12 if is_dub else 87,
                 mfx_sw=1,
                 mfx_cho=random.randint(45, 95),
                 mfx_rev=random.randint(80, 127) if is_dub else random.randint(45, 90),
@@ -1481,7 +1522,7 @@ class SH4dSVD:
                 amp_dec=650,
                 amp_sus=880,
                 amp_rel=random.randint(140, 300),
-                mfx_type=random.choice([19, 20, 45]),
+                mfx_type=random.choice([34, 73, 84, 87]),
                 mfx_sw=1,
                 mfx_cho=random.randint(30, 80),
                 mfx_rev=random.randint(40, 85),
@@ -1512,7 +1553,7 @@ class SH4dSVD:
                 amp_dec=random.randint(460, 820),
                 amp_sus=random.randint(180, 480),
                 amp_rel=random.randint(520, 920),
-                mfx_type=25,
+                mfx_type=17,
                 mfx_sw=1,
                 mfx_cho=random.randint(50, 100),
                 mfx_rev=random.randint(75, 125),
@@ -1668,10 +1709,8 @@ class SH4dSVD:
             kw["matrix"] = new_mtx
 
         if mut_mfx:
-            kw["mfx_cho"] = drift(cur["mfx_cho"], 0, 127, 90)
-            kw["mfx_rev"] = drift(cur["mfx_rev"], 0, 127, 90)
             if random.random() < amt * 0.35:
-                kw["mfx_type"] = random.choice([3, 19, 20, 21, 25, 26, 28, 32, 35, 45])
+                kw["mfx_type"] = random.choice([4, 12, 17, 26, 33, 34, 73, 75, 84, 87, 92])
 
         self.set_patch_params(idx, **kw)
         return self.get_patch_params(idx)
