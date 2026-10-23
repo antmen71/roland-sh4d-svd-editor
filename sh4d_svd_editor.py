@@ -16,6 +16,8 @@ Always keep a separate, unmodified backup copy of your original SH4d.SVD file.
 
 import os
 import sys
+import math
+import random
 import shutil
 import struct
 import ctypes
@@ -978,6 +980,589 @@ class SH4dSVD:
             off = self.get_step_offset(pat_idx, part_idx, s)
             self.data[off : off + 52] = empty_step
 
+    # ---------------- PRESET GENERATOR, MUTATOR & MATH WAVE / STEP LAB ----------------
+    def find_template_patch_idx(self, preferred_model: int = 16) -> int:
+        """Finds a valid non-init hardware patch index in PATc to clone base routing tables from."""
+        for i in range(256):
+            p = self.get_patch_params(i)
+            if p["osc_model"] == preferred_model and p["name"].strip().upper() != "INIT TONE":
+                return i
+        for i in range(256):
+            p = self.get_patch_params(i)
+            if p["name"].strip().upper() != "INIT TONE":
+                return i
+        return 0
+
+    def get_drawing_wave(self, idx: int) -> dict:
+        """Reads 32-step custom waveform (-72..+72) and Wave Edge (0..127) for DRAWING Model (23)."""
+        off = self.get_patch_offset(idx)
+        steps = [s8(self.data[off + 0x674 + i]) for i in range(32)]
+        edge = int(self.data[off + 0x698])
+        return {"steps": steps, "edge": edge}
+
+    def set_drawing_wave(
+        self, idx: int, steps_32: list, wave_edge: int = 40, switch_model: bool = True
+    ):
+        """Writes 32-step custom waveform (-72..+72) and Wave Edge (0..127) into patch idx."""
+        if switch_model:
+            cur = self.get_patch_params(idx)
+            if cur["osc_model"] != 23 or cur["name"].strip().upper() == "INIT TONE":
+                tmpl_idx = self.find_template_patch_idx(23)
+                cur_name = cur["name"] if cur["name"].strip().upper() != "INIT TONE" else "Math Draw Wave"
+                self.set_patch_bytes(idx, self.get_patch_bytes(tmpl_idx))
+                self.set_patch_params(idx, name=cur_name, osc_model=23)
+        off = self.get_patch_offset(idx)
+        for i in range(32):
+            v = int(steps_32[i]) if i < len(steps_32) else 0
+            self.data[off + 0x674 + i] = u8_from_s8(max(-72, min(72, v)))
+        self.data[off + 0x698] = max(0, min(127, int(wave_edge)))
+
+    def get_step_lfo_data(self, idx: int) -> dict:
+        """Reads 16-step LFO values (-72..+72) and curves (0..36) for STEP Model (27)."""
+        off = self.get_patch_offset(idx)
+        vals = [s8(self.data[off + 0x410 + i]) for i in range(16)]
+        curves = [int(self.data[off + 0x420 + i]) for i in range(16)]
+        return {"vals": vals, "curves": curves}
+
+    def set_step_lfo_data(
+        self, idx: int, vals_16: list, curves_16: list = None, switch_model: bool = True
+    ):
+        """Writes 16-step sequence values (-72..+72) and curves (0..36) into STEP Model (27) partials."""
+        if switch_model:
+            cur = self.get_patch_params(idx)
+            if cur["osc_model"] != 27 or cur["name"].strip().upper() == "INIT TONE":
+                tmpl_idx = self.find_template_patch_idx(27)
+                cur_name = cur["name"] if cur["name"].strip().upper() != "INIT TONE" else "Math Step Seq"
+                self.set_patch_bytes(idx, self.get_patch_bytes(tmpl_idx))
+                self.set_patch_params(idx, name=cur_name, osc_model=27)
+        off = self.get_patch_offset(idx)
+        for p_base in (0x410, 0x478):
+            for i in range(16):
+                v = int(vals_16[i]) if i < len(vals_16) else 0
+                self.data[off + p_base + i] = u8_from_s8(max(-72, min(72, v)))
+                if curves_16 is not None and i < len(curves_16):
+                    self.data[off + p_base + 0x10 + i] = max(0, min(36, int(curves_16[i])))
+
+    @staticmethod
+    def compute_math_wave_32(formula_name: str) -> tuple:
+        """Returns (steps_32_list, recommended_edge) for DRAWING Model 23."""
+        steps = []
+        edge = 35
+        for i in range(32):
+            t = i / 32.0
+            ph = 2.0 * math.pi * t
+            if "Additive Odd/Even" in formula_name:
+                val = (
+                    math.sin(ph)
+                    + 0.55 * math.sin(2 * ph)
+                    + 0.40 * math.sin(3 * ph)
+                    + 0.25 * math.sin(5 * ph)
+                    + 0.18 * math.sin(7 * ph)
+                ) / 1.65
+                edge = 25
+            elif "Formant Vocal" in formula_name:
+                env = math.exp(-3.2 * t)
+                val = env * (0.65 * math.sin(3 * ph) + 0.55 * math.sin(7 * ph) + 0.35 * math.cos(11 * ph))
+                edge = 20
+            elif "Wave-Folded" in formula_name:
+                raw = 2.3 * math.sin(ph)
+                val = math.sin(raw * math.pi * 0.65)
+                edge = 30
+            elif "Bit-Crushed Staircase" in formula_name:
+                saw = 1.0 - 2.0 * t
+                quant = round(saw * 4.0) / 4.0
+                val = quant
+                edge = 95
+            elif "Hard-Sync" in formula_name:
+                slave_ph = (t * 4.5) % 1.0
+                win = 1.0 - t
+                val = (1.0 - 2.0 * slave_ph) * (0.4 + 0.6 * win)
+                edge = 65
+            elif "Metallic Inharmonic" in formula_name:
+                val = (
+                    0.50 * math.sin(ph)
+                    + 0.45 * math.sin(2.76 * ph)
+                    + 0.35 * math.sin(5.40 * ph)
+                    + 0.25 * math.sin(8.93 * ph)
+                )
+                edge = 45
+            elif "FM 2-Op" in formula_name:
+                idx_fm = 2.8
+                val = math.sin(ph + idx_fm * math.sin(3.0 * ph))
+                edge = 30
+            else:
+                # Smooth Random Spline / Chaos
+                val = (
+                    0.55 * math.sin(ph + random.uniform(-0.4, 0.4))
+                    + 0.45 * math.cos(3 * ph + random.uniform(-0.8, 0.8))
+                    + random.uniform(-0.25, 0.25)
+                )
+                edge = random.randint(20, 75)
+            steps.append(max(-72, min(72, int(round(val * 70.0)))))
+        return steps, edge
+
+    @staticmethod
+    def compute_step_lfo_16(pattern_name: str) -> tuple:
+        """Returns (vals_16_list, curves_16_list) for STEP Model 27."""
+        if "Trance Gate" in pattern_name:
+            vals = [64, -64, 64, -40, 64, -64, 48, -64, 64, -64, 64, -20, 64, 48, -64, -64]
+            curves = [0] * 16
+        elif "Acid Octave" in pattern_name:
+            vals = [0, 24, 0, -24, 14, 0, 24, -14, 0, 24, 36, 0, -24, 14, 24, 0]
+            curves = [4, 0, 4, 0, 8, 0, 4, 0, 4, 0, 12, 0, 4, 8, 4, 0]
+        elif "Rising Filter" in pattern_name:
+            vals = [int(-64 + (128 * i / 15.0)) for i in range(16)]
+            curves = [5] * 16
+        elif "Pendulum" in pattern_name:
+            vals = [int(round(64 * math.sin(2 * math.pi * i / 16.0))) for i in range(16)]
+            curves = [6] * 16
+        elif "Dub Polyrhythm" in pattern_name:
+            base3 = [60, -35, 25]
+            vals = [base3[i % 3] for i in range(16)]
+            curves = [10 if i % 3 == 0 else 2 for i in range(16)]
+        else:
+            # Glitch Sample & Hold
+            pool = [-64, -48, -36, -24, -12, 0, 12, 24, 36, 48, 64]
+            vals = [random.choice(pool) for _ in range(16)]
+            curves = [random.choice([0, 0, 4, 8, 15]) for _ in range(16)]
+        return vals, curves
+
+    def generate_smart_preset(
+        self, target_idx: int, genre: str, custom_name: str = None
+    ) -> dict:
+        """Synthesizes a complete musical preset in PATc[target_idx] tailored to genre."""
+        genres_list = [
+            "Acid 303 Bass",
+            "Reese / Neuro Bass",
+            "Warm Analog Pad",
+            "Lush Chord / Strings",
+            "Pluck / Arpeggio",
+            "Dub Techno Chord Stab",
+            "Cyberpunk / Sync Lead",
+            "FM / Metallic Bell",
+            "Custom Drawn Wave (DRAWING)",
+            "Rhythmic Step-Mod (STEP)",
+        ]
+        if "Mixed" in genre or "Surprise" in genre:
+            genre = random.choice(genres_list)
+
+        # Pick best hardware template so internal partial switches are 100% valid
+        if "Acid" in genre:
+            model = 19  # SH-101
+            tmpl = self.find_template_patch_idx(19)
+        elif "Sync" in genre:
+            model = 22  # SYNC
+            tmpl = self.find_template_patch_idx(22)
+        elif "DRAWING" in genre:
+            model = 23  # DRAWING
+            tmpl = self.find_template_patch_idx(23)
+        elif "STEP" in genre:
+            model = 27  # STEP
+            tmpl = self.find_template_patch_idx(27)
+        elif "Wavetable" in genre or "Bell" in genre:
+            model = random.choice([20, 21, 24])  # FM / RING / WAVETABLE
+            tmpl = self.find_template_patch_idx(24)
+        else:
+            model = random.choice([16, 17])  # SH-4d / SH-3D
+            tmpl = self.find_template_patch_idx(16)
+
+        self.set_patch_bytes(target_idx, self.get_patch_bytes(tmpl))
+
+        sfx = random.randint(10, 99)
+        if "Acid 303" in genre:
+            name = custom_name or f"Acid 303 #{sfx}"
+            self.set_patch_params(
+                target_idx,
+                name=name,
+                osc_model=19,
+                category=12,
+                patch_level=random.randint(105, 122),
+                mono_poly=0,
+                legato_sw=1,
+                porta_sw=1,
+                porta_time=random.randint(85, 220),
+                analog_feel=random.randint(18, 45),
+                slider1=127,
+                slider2=random.randint(60, 115),
+                slider3=random.randint(40, 95),
+                slider4=random.randint(0, 35),
+                cutoff=random.randint(180, 420),
+                resonance=random.randint(580, 860),
+                flt_env_depth=random.randint(68, 92),
+                flt_atk=random.randint(0, 15),
+                flt_dec=random.randint(220, 480),
+                flt_sus=random.randint(0, 90),
+                flt_rel=random.randint(80, 240),
+                amp_atk=0,
+                amp_dec=random.randint(380, 680),
+                amp_sus=random.randint(400, 820),
+                amp_rel=random.randint(80, 220),
+                mfx_type=random.choice([19, 20, 21, 35]),
+                mfx_sw=1,
+                mfx_cho=random.randint(0, 30),
+                mfx_rev=random.randint(10, 45),
+            )
+        elif "Reese" in genre:
+            name = custom_name or f"Reese Bass #{sfx}"
+            oscs = [
+                {"wave": 1, "coarse": 0, "fine": -random.randint(14, 28), "pw": 64, "pwm": 10, "fat": random.randint(40, 90), "pan": -20},
+                {"wave": 1, "coarse": 0, "fine": random.randint(14, 28), "pw": 64, "pwm": 10, "fat": random.randint(40, 90), "pan": 20},
+                {"wave": 2, "coarse": -12, "fine": 0, "pw": random.randint(40, 90), "pwm": 24, "fat": random.randint(20, 60), "pan": 0},
+                {"wave": 4, "coarse": -12, "fine": 0, "pw": 0, "pwm": 0, "fat": 80, "pan": 0},
+            ]
+            mtx = [
+                {"src": 0, "dst1": 6, "dep1": random.randint(12, 32), "dst2": 17, "dep2": 22, "dst3": 0, "dep3": 0, "dst4": 0, "dep4": 0},
+                {"src": 98, "dst1": 6, "dep1": 24, "dst2": 0, "dep2": 0, "dst3": 0, "dep3": 0, "dst4": 0, "dep4": 0},
+                {"src": 102, "dst1": 0, "dep1": 0, "dst2": 0, "dep2": 0, "dst3": 0, "dep3": 0, "dst4": 0, "dep4": 0},
+                {"src": 102, "dst1": 0, "dep1": 0, "dst2": 0, "dep2": 0, "dst3": 0, "dep3": 0, "dst4": 0, "dep4": 0},
+            ]
+            self.set_patch_params(
+                target_idx,
+                name=name,
+                osc_model=16,
+                category=12,
+                patch_level=115,
+                mono_poly=0,
+                legato_sw=1,
+                porta_sw=1,
+                porta_time=random.randint(110, 280),
+                analog_feel=random.randint(25, 65),
+                oscs=oscs,
+                matrix=mtx,
+                slider1=127,
+                slider2=122,
+                slider3=random.randint(85, 115),
+                slider4=random.randint(90, 127),
+                cutoff=random.randint(240, 520),
+                resonance=random.randint(220, 480),
+                flt_env_depth=random.randint(60, 78),
+                flt_atk=random.randint(10, 80),
+                flt_dec=random.randint(450, 750),
+                flt_sus=random.randint(350, 680),
+                flt_rel=random.randint(180, 380),
+                amp_atk=random.randint(0, 25),
+                amp_dec=700,
+                amp_sus=950,
+                amp_rel=random.randint(150, 320),
+                lfo_shape=0,
+                lfo_rate=random.randint(120, 340),
+                lfo_flt=random.randint(-28, 28),
+                mfx_type=random.choice([3, 19, 25]),
+                mfx_sw=1,
+                mfx_cho=random.randint(40, 95),
+                mfx_rev=random.randint(10, 35),
+            )
+        elif "Warm Analog Pad" in genre or "Lush Chord" in genre:
+            is_lush = "Lush" in genre
+            name = custom_name or (f"Lush Pad #{sfx}" if is_lush else f"Warm Pad #{sfx}")
+            oscs = [
+                {"wave": 10 if is_lush else 1, "coarse": 0, "fine": -random.randint(8, 18), "pw": 64, "pwm": 18, "fat": random.randint(35, 85), "pan": -32},
+                {"wave": 6 if is_lush else 2, "coarse": 0, "fine": random.randint(8, 18), "pw": random.randint(50, 90), "pwm": 28, "fat": random.randint(35, 85), "pan": 32},
+                {"wave": 3, "coarse": 12 if is_lush else 0, "fine": -random.randint(4, 12), "pw": 64, "pwm": 0, "fat": 40, "pan": -16},
+                {"wave": 4, "coarse": -12, "fine": 0, "pw": 0, "pwm": 0, "fat": 50, "pan": 16},
+            ]
+            mtx = [
+                {"src": 0, "dst1": 17, "dep1": 28, "dst2": 18, "dep2": -24, "dst3": 28, "dep3": 18, "dst4": 6, "dep4": 14},
+                {"src": 95, "dst1": 6, "dep1": 32, "dst2": 12, "dep2": 20, "dst3": 0, "dep3": 0, "dst4": 0, "dep4": 0},
+                {"src": 102, "dst1": 0, "dep1": 0, "dst2": 0, "dep2": 0, "dst3": 0, "dep3": 0, "dst4": 0, "dep4": 0},
+                {"src": 102, "dst1": 0, "dep1": 0, "dst2": 0, "dep2": 0, "dst3": 0, "dep3": 0, "dst4": 0, "dep4": 0},
+            ]
+            self.set_patch_params(
+                target_idx,
+                name=name,
+                osc_model=16,
+                category=21,
+                patch_level=104,
+                mono_poly=1,
+                legato_sw=0,
+                porta_sw=0,
+                analog_feel=random.randint(35, 85),
+                oscs=oscs,
+                matrix=mtx,
+                slider1=118,
+                slider2=114,
+                slider3=random.randint(65, 105),
+                slider4=random.randint(70, 105),
+                cutoff=random.randint(360, 680),
+                resonance=random.randint(120, 340),
+                flt_env_depth=random.randint(56, 72),
+                flt_atk=random.randint(320, 680),
+                flt_dec=random.randint(520, 860),
+                flt_sus=random.randint(580, 880),
+                flt_rel=random.randint(520, 880),
+                amp_atk=random.randint(280, 640),
+                amp_dec=random.randint(580, 880),
+                amp_sus=random.randint(680, 960),
+                amp_rel=random.randint(540, 900),
+                lfo_shape=1,
+                lfo_rate=random.randint(90, 260),
+                lfo_flt=random.randint(-18, 18),
+                mfx_type=random.choice([25, 26, 28, 32]),
+                mfx_sw=1,
+                mfx_cho=random.randint(70, 120),
+                mfx_rev=random.randint(75, 125),
+            )
+        elif "Pluck" in genre or "Dub Techno" in genre:
+            is_dub = "Dub" in genre
+            name = custom_name or (f"Dub Chord #{sfx}" if is_dub else f"Synth Pluck #{sfx}")
+            oscs = [
+                {"wave": 6 if is_dub else 10, "coarse": 0, "fine": -9, "pw": 70, "pwm": 15, "fat": 60, "pan": -18},
+                {"wave": 2, "coarse": 7 if is_dub else 0, "fine": 9, "pw": 80, "pwm": 20, "fat": 50, "pan": 18},
+                {"wave": 1, "coarse": 12 if not is_dub else 3, "fine": -5, "pw": 64, "pwm": 0, "fat": 40, "pan": 0},
+                {"wave": 11 if is_dub else 3, "coarse": -12, "fine": 0, "pw": 0, "pwm": 0, "fat": 30, "pan": 0},
+            ]
+            self.set_patch_params(
+                target_idx,
+                name=name,
+                osc_model=16,
+                category=15,
+                patch_level=110,
+                mono_poly=1,
+                legato_sw=0,
+                porta_sw=0,
+                analog_feel=random.randint(20, 60),
+                oscs=oscs,
+                slider1=125,
+                slider2=110,
+                slider3=random.randint(75, 115),
+                slider4=random.randint(25, 65) if is_dub else random.randint(60, 95),
+                cutoff=random.randint(180, 380),
+                resonance=random.randint(320, 620) if is_dub else random.randint(160, 380),
+                flt_env_depth=random.randint(74, 96),
+                flt_atk=0,
+                flt_dec=random.randint(180, 380),
+                flt_sus=random.randint(0, 120),
+                flt_rel=random.randint(180, 420),
+                amp_atk=0,
+                amp_dec=random.randint(220, 460),
+                amp_sus=random.randint(0, 180),
+                amp_rel=random.randint(220, 480),
+                mfx_type=45 if is_dub else 25,
+                mfx_sw=1,
+                mfx_cho=random.randint(45, 95),
+                mfx_rev=random.randint(80, 127) if is_dub else random.randint(45, 90),
+            )
+        elif "Sync Lead" in genre or "Cyberpunk" in genre:
+            name = custom_name or f"Cyber Sync #{sfx}"
+            self.set_patch_params(
+                target_idx,
+                name=name,
+                osc_model=22,
+                category=8,
+                patch_level=114,
+                mono_poly=0,
+                legato_sw=1,
+                porta_sw=1,
+                porta_time=random.randint(60, 180),
+                analog_feel=random.randint(20, 50),
+                slider1=127,
+                slider2=random.randint(75, 125),
+                slider3=random.randint(60, 115),
+                slider4=random.randint(40, 100),
+                cutoff=random.randint(420, 780),
+                resonance=random.randint(280, 540),
+                flt_env_depth=random.randint(66, 86),
+                flt_atk=random.randint(0, 35),
+                flt_dec=random.randint(320, 600),
+                flt_sus=random.randint(300, 680),
+                flt_rel=random.randint(140, 320),
+                amp_atk=0,
+                amp_dec=650,
+                amp_sus=880,
+                amp_rel=random.randint(140, 300),
+                mfx_type=random.choice([19, 20, 45]),
+                mfx_sw=1,
+                mfx_cho=random.randint(30, 80),
+                mfx_rev=random.randint(40, 85),
+            )
+        elif "Bell" in genre or "FM" in genre:
+            name = custom_name or f"Metallic Bell #{sfx}"
+            self.set_patch_params(
+                target_idx,
+                name=name,
+                osc_model=model,
+                category=28,
+                patch_level=108,
+                mono_poly=1,
+                legato_sw=0,
+                porta_sw=0,
+                slider1=random.randint(90, 127),
+                slider2=random.randint(65, 120),
+                slider3=random.randint(45, 110),
+                slider4=random.randint(30, 95),
+                cutoff=random.randint(520, 880),
+                resonance=random.randint(140, 360),
+                flt_env_depth=random.randint(64, 82),
+                flt_atk=0,
+                flt_dec=random.randint(420, 760),
+                flt_sus=random.randint(40, 220),
+                flt_rel=random.randint(480, 880),
+                amp_atk=0,
+                amp_dec=random.randint(460, 820),
+                amp_sus=random.randint(0, 160),
+                amp_rel=random.randint(520, 920),
+                mfx_type=25,
+                mfx_sw=1,
+                mfx_cho=random.randint(50, 100),
+                mfx_rev=random.randint(75, 125),
+            )
+        elif "DRAWING" in genre:
+            formulas = [
+                "Additive Odd/Even Harmonics",
+                "Formant Vocal Wave",
+                "Wave-Folded West-Coast Sine",
+                "Bit-Crushed Staircase Saw",
+                "Hard-Sync Sweep Wave",
+                "Metallic Inharmonic Bell",
+                "FM 2-Op Phase Modulated",
+                "Smooth Random Spline",
+            ]
+            chosen_f = random.choice(formulas)
+            steps_32, edge = self.compute_math_wave_32(chosen_f)
+            name = custom_name or f"DrawWave #{sfx}"
+            self.set_drawing_wave(target_idx, steps_32, edge, switch_model=True)
+            self.set_patch_params(
+                target_idx,
+                name=name,
+                osc_model=23,
+                patch_level=112,
+                cutoff=random.randint(360, 780),
+                resonance=random.randint(180, 480),
+                flt_env_depth=random.randint(64, 86),
+                flt_atk=random.randint(0, 120),
+                flt_dec=random.randint(320, 680),
+                flt_sus=random.randint(220, 720),
+                flt_rel=random.randint(240, 640),
+                amp_atk=random.randint(0, 90),
+                amp_dec=random.randint(400, 780),
+                amp_sus=random.randint(350, 880),
+                amp_rel=random.randint(260, 680),
+                mfx_cho=random.randint(35, 95),
+                mfx_rev=random.randint(45, 110),
+            )
+        elif "STEP" in genre:
+            patterns = [
+                "Trance Gate 16-Step",
+                "Acid Octave Arpeggio",
+                "Rising Filter / Pitch Ramp",
+                "Pendulum Sine Groove",
+                "Dub Polyrhythm (3x5)",
+                "Glitch Sample & Hold",
+            ]
+            chosen_p = random.choice(patterns)
+            vals_16, curves_16 = self.compute_step_lfo_16(chosen_p)
+            name = custom_name or f"StepSeq #{sfx}"
+            self.set_step_lfo_data(target_idx, vals_16, curves_16, switch_model=True)
+            self.set_patch_params(
+                target_idx,
+                name=name,
+                osc_model=27,
+                patch_level=114,
+                cutoff=random.randint(280, 680),
+                resonance=random.randint(240, 560),
+                flt_env_depth=random.randint(62, 86),
+                mfx_cho=random.randint(40, 95),
+                mfx_rev=random.randint(40, 100),
+            )
+        return self.get_patch_params(target_idx)
+
+    def mutate_patch(
+        self,
+        idx: int,
+        amount_pct: int = 20,
+        mut_osc: bool = True,
+        mut_flt: bool = True,
+        mut_env: bool = True,
+        mut_lfo_mtx: bool = True,
+        mut_mfx: bool = False,
+        new_name: str = None,
+    ) -> dict:
+        """Organic genetic mutator: drifts unlocked synthesis sections of patch idx by amount_pct (5..100%)."""
+        cur = self.get_patch_params(idx)
+        if cur["name"].strip().upper() == "INIT TONE":
+            tmpl = self.find_template_patch_idx(16)
+            self.set_patch_bytes(idx, self.get_patch_bytes(tmpl))
+            cur = self.get_patch_params(idx)
+
+        amt = max(1, min(100, int(amount_pct))) / 100.0
+
+        def drift(val, lo, hi, span=None):
+            sp = span if span is not None else (hi - lo)
+            delta = int(round(random.uniform(-sp * amt * 0.45, sp * amt * 0.45)))
+            return max(lo, min(hi, int(val) + delta))
+
+        kw = {}
+        if new_name:
+            kw["name"] = new_name
+
+        if mut_osc:
+            kw["analog_feel"] = drift(cur["analog_feel"], 0, 127, 80)
+            kw["slider1"] = drift(cur["slider1"], 45, 127, 90)
+            kw["slider2"] = drift(cur["slider2"], 0, 127, 90)
+            kw["slider3"] = drift(cur["slider3"], 0, 127, 90)
+            kw["slider4"] = drift(cur["slider4"], 0, 127, 90)
+            new_oscs = []
+            for o in cur["oscs"]:
+                no = dict(o)
+                if random.random() < amt * 0.45:
+                    no["wave"] = random.choice([1, 2, 3, 4, 5, 6, 7, 10])
+                no["fine"] = drift(o["fine"], -50, 50, 36)
+                no["pw"] = drift(o["pw"], 0, 127, 80)
+                no["pwm"] = drift(o["pwm"], -63, 63, 60)
+                no["fat"] = drift(o["fat"], 0, 127, 80)
+                no["pan"] = drift(o["pan"], -64, 63, 64)
+                new_oscs.append(no)
+            kw["oscs"] = new_oscs
+            if cur["osc_model"] == 23:
+                dw = self.get_drawing_wave(idx)
+                new_steps = [drift(s, -72, 72, 90) for s in dw["steps"]]
+                new_edge = drift(dw["edge"], 0, 127, 80)
+                self.set_drawing_wave(idx, new_steps, new_edge, switch_model=False)
+            elif cur["osc_model"] == 27:
+                st = self.get_step_lfo_data(idx)
+                new_vals = [drift(v, -72, 72, 90) for v in st["vals"]]
+                self.set_step_lfo_data(idx, new_vals, st["curves"], switch_model=False)
+
+        if mut_flt:
+            kw["cutoff"] = drift(cur["cutoff"], 60, 980, 650)
+            kw["resonance"] = drift(cur["resonance"], 0, 920, 600)
+            kw["flt_env_depth"] = drift(cur["flt_env_depth"], 20, 110, 50)
+
+        if mut_env:
+            kw["flt_atk"] = drift(cur["flt_atk"], 0, 950, 500)
+            kw["flt_dec"] = drift(cur["flt_dec"], 40, 980, 550)
+            kw["flt_sus"] = drift(cur["flt_sus"], 0, 980, 600)
+            kw["flt_rel"] = drift(cur["flt_rel"], 20, 980, 550)
+            kw["amp_atk"] = drift(cur["amp_atk"], 0, 900, 450)
+            kw["amp_dec"] = drift(cur["amp_dec"], 60, 980, 550)
+            kw["amp_sus"] = drift(cur["amp_sus"], 0, 1000, 600)
+            kw["amp_rel"] = drift(cur["amp_rel"], 20, 980, 550)
+
+        if mut_lfo_mtx:
+            if random.random() < amt * 0.4:
+                kw["lfo_shape"] = random.randint(0, 5)
+            kw["lfo_rate"] = drift(cur["lfo_rate"], 10, 950, 500)
+            kw["lfo_pitch"] = drift(cur["lfo_pitch"], -36, 36, 32)
+            kw["lfo_flt"] = drift(cur["lfo_flt"], -63, 63, 64)
+            kw["lfo_amp"] = drift(cur["lfo_amp"], -63, 63, 50)
+            new_mtx = []
+            for m in cur["matrix"]:
+                nm = dict(m)
+                for d_i in range(1, 5):
+                    if nm[f"dst{d_i}"] != 0:
+                        nm[f"dep{d_i}"] = drift(nm[f"dep{d_i}"], -63, 63, 64)
+                new_mtx.append(nm)
+            kw["matrix"] = new_mtx
+
+        if mut_mfx:
+            kw["mfx_cho"] = drift(cur["mfx_cho"], 0, 127, 90)
+            kw["mfx_rev"] = drift(cur["mfx_rev"], 0, 127, 90)
+            if random.random() < amt * 0.35:
+                kw["mfx_type"] = random.choice([3, 19, 20, 21, 25, 26, 28, 32, 35, 45])
+
+        self.set_patch_params(idx, **kw)
+        return self.get_patch_params(idx)
+
     def save(self, out_path: str = None, make_backup: bool = True) -> str:
         target = out_path or self.path
         if make_backup and os.path.exists(target):
@@ -1155,6 +1740,7 @@ class SH4dEditorApp(tk.Tk):
         self._build_patches_tab()
         self._build_patterns_tab()
         self._build_rhythm_tab()
+        self._build_generator_tab()
 
     # ---------------- TAB 0: LIVE REAL-TIME MIDI SYNTH CONTROLLER ----------------
     def _build_live_synth_tab(self):
@@ -1829,6 +2415,24 @@ class SH4dEditorApp(tk.Tk):
         ttk.Button(act_frm, text="📋 Copy", command=self.on_copy_patch).pack(side=tk.LEFT, padx=2)
         ttk.Button(act_frm, text="📤 Export", command=self.on_export_patch).pack(side=tk.LEFT, padx=2)
         ttk.Button(act_frm, text="📥 Import", command=self.on_import_patch).pack(side=tk.LEFT, padx=2)
+
+        gen_quick_row = ttk.Frame(right)
+        gen_quick_row.pack(fill=tk.X, pady=(4, 0))
+        ttk.Button(
+            gen_quick_row,
+            text="🎲 Mutate Selected (20%)",
+            command=self.on_quick_mutate_patch,
+        ).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
+        ttk.Button(
+            gen_quick_row,
+            text="✨ Smart Randomize Slot",
+            command=self.on_quick_randomize_patch,
+        ).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
+        ttk.Button(
+            gen_quick_row,
+            text="🧪 Open Generator Lab ->",
+            command=lambda: self.nb.select(4),
+        ).pack(side=tk.LEFT, padx=(4, 0))
 
     # ---------------- TAB 3: RHYTHM KITS & DRUM PITCH EDITOR ----------------
     def _build_rhythm_tab(self):
@@ -2739,6 +3343,507 @@ class SH4dEditorApp(tk.Tk):
         dst = max(0, min(63, int(self.var_kit_target.get()) - 1))
         self.svd.copy_kit(src, dst)
         self.refresh_kits()
+
+    # ---------------- TAB 5: PRESET GENERATOR, MUTATOR & MATH WAVE/STEP LAB ----------------
+    def _build_generator_tab(self):
+        tab = ttk.Frame(self.nb, padding=6)
+        self.nb.add(tab, text="🎲 5. Preset Generator & Mutator Lab")
+
+        pw = tk.PanedWindow(tab, orient=tk.HORIZONTAL, sashwidth=6, sashrelief=tk.RAISED, bg="#b8b8b8")
+        pw.pack(fill=tk.BOTH, expand=True)
+
+        # --- LEFT PANE: SMART CATEGORY / GENRE PRESET & BATCH BANK GENERATOR ---
+        left = ttk.LabelFrame(pw, text="✨ 1. Smart Genre Preset & Batch Bank Generator", padding=8)
+
+        ttk.Label(
+            left,
+            text="Synthesizes musical SH-4d patches (OSC 1–4, Filter/Amp ADSR, LFO, Matrix & MFX)\ninto .SVD memory without overwriting active slots unless you choose to.",
+            font=("Segoe UI", 8),
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        r_g = ttk.Frame(left)
+        r_g.pack(fill=tk.X, pady=3)
+        ttk.Label(r_g, text="Sound Style / Genre:", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT)
+        self.var_gen_genre = tk.StringVar(value="Acid 303 Bass")
+        self.gen_genres_list = [
+            "Acid 303 Bass",
+            "Reese / Neuro Bass",
+            "Warm Analog Pad",
+            "Lush Chord / Strings",
+            "Pluck / Arpeggio",
+            "Dub Techno Chord Stab",
+            "Cyberpunk / Sync Lead",
+            "FM / Metallic Bell",
+            "Custom Drawn Wave (DRAWING)",
+            "Rhythmic Step-Mod (STEP)",
+            "🎲 Mixed / Surprise Me",
+        ]
+        ttk.Combobox(
+            r_g,
+            textvariable=self.var_gen_genre,
+            values=self.gen_genres_list,
+            state="readonly",
+            width=26,
+        ).pack(side=tk.LEFT, padx=6)
+
+        # Single Preset Generation Box
+        s_lf = ttk.LabelFrame(left, text="Single Patch Generation", padding=6)
+        s_lf.pack(fill=tk.X, pady=6)
+
+        rs1 = ttk.Frame(s_lf)
+        rs1.pack(fill=tk.X, pady=2)
+        ttk.Label(rs1, text="Target User Slot (1..256):").pack(side=tk.LEFT)
+        self.var_gen_single_slot = tk.StringVar(value="36")
+        ttk.Spinbox(rs1, from_=1, to=256, textvariable=self.var_gen_single_slot, width=6).pack(side=tk.LEFT, padx=4)
+        ttk.Button(rs1, text="🔍 Find First INIT Slot", command=self.on_find_next_init_slot).pack(side=tk.LEFT, padx=4)
+
+        rs2 = ttk.Frame(s_lf)
+        rs2.pack(fill=tk.X, pady=3)
+        ttk.Label(rs2, text="Custom Name (optional):").pack(side=tk.LEFT)
+        self.var_gen_custom_name = tk.StringVar(value="")
+        ttk.Entry(rs2, textvariable=self.var_gen_custom_name, width=18).pack(side=tk.LEFT, padx=4)
+
+        ttk.Button(
+            s_lf,
+            text="✨ Generate Smart Preset into Target Slot",
+            command=self.on_gen_single_preset,
+        ).pack(fill=tk.X, pady=(4, 2))
+        ttk.Button(
+            s_lf,
+            text="💾 Generate & Export Directly as .sh4d_patch File...",
+            command=self.on_gen_and_export_file,
+        ).pack(fill=tk.X, pady=2)
+
+        # Batch Bank Generation Box
+        b_lf = ttk.LabelFrame(left, text="📦 Batch Bank Generator (Fill 8 or 16 Slots at Once)", padding=6)
+        b_lf.pack(fill=tk.X, pady=6)
+
+        rb1 = ttk.Frame(b_lf)
+        rb1.pack(fill=tk.X, pady=2)
+        ttk.Label(rb1, text="Start Slot (1..256):").pack(side=tk.LEFT)
+        self.var_gen_bank_start = tk.StringVar(value="49")
+        ttk.Spinbox(rb1, from_=1, to=256, textvariable=self.var_gen_bank_start, width=6).pack(side=tk.LEFT, padx=4)
+        ttk.Label(rb1, text="(e.g. 49 = U04-01)", font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+
+        rb2 = ttk.Frame(b_lf)
+        rb2.pack(fill=tk.X, pady=3)
+        ttk.Label(rb2, text="Number of Patches:").pack(side=tk.LEFT)
+        self.var_gen_bank_count = tk.StringVar(value="16 (Full Bank)")
+        ttk.Combobox(
+            rb2,
+            textvariable=self.var_gen_bank_count,
+            values=["8 (Half Bank)", "16 (Full Bank)"],
+            state="readonly",
+            width=15,
+        ).pack(side=tk.LEFT, padx=6)
+
+        ttk.Button(
+            b_lf,
+            text="🚀 Generate Batch Bank (Using Style Above)",
+            command=self.on_gen_batch_bank,
+        ).pack(fill=tk.X, pady=(4, 2))
+
+        self.lbl_gen_log = ttk.Label(
+            left,
+            text="Ready — Select a style or slot and click Generate.",
+            font=("Segoe UI", 8, "bold"),
+            wraplength=340,
+        )
+        self.lbl_gen_log.pack(anchor=tk.W, pady=(6, 0))
+
+        # --- CENTER PANE: GENETIC PATCH MUTATOR WITH SECTION LOCKS ---
+        mid = ttk.LabelFrame(pw, text="🧬 2. Patch Mutator & Variations (With Section Locks)", padding=8)
+
+        ttk.Label(
+            mid,
+            text="Organically drifts parameters of any existing User Patch while locking sections you want to preserve.",
+            font=("Segoe UI", 8),
+            wraplength=330,
+        ).pack(anchor=tk.W, pady=(0, 6))
+
+        rm_src = ttk.Frame(mid)
+        rm_src.pack(fill=tk.X, pady=3)
+        ttk.Label(rm_src, text="Source Patch Slot (1..256):", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT)
+        self.var_mut_src_slot = tk.StringVar(value="1")
+        ttk.Spinbox(rm_src, from_=1, to=256, textvariable=self.var_mut_src_slot, width=6).pack(side=tk.LEFT, padx=4)
+        ttk.Button(rm_src, text="⬅ Use Selected in Tab 2", command=self.on_sync_mut_slot_from_tab2).pack(side=tk.LEFT, padx=2)
+
+        rm_amt = ttk.LabelFrame(mid, text="Mutation Intensity / Drift Amount (%)", padding=6)
+        rm_amt.pack(fill=tk.X, pady=6)
+        self.var_mut_amount = tk.IntVar(value=25)
+        self.lbl_mut_amt_val = ttk.Label(rm_amt, text="25% (Subtle Organic Variation)", font=("Segoe UI", 8, "bold"))
+        self.lbl_mut_amt_val.pack(anchor=tk.W)
+        sc_mut = ttk.Scale(
+            rm_amt,
+            from_=5,
+            to=100,
+            orient=tk.HORIZONTAL,
+            command=self._on_mut_scale_move,
+        )
+        sc_mut.set(25)
+        sc_mut.pack(fill=tk.X, pady=3)
+
+        rm_locks = ttk.LabelFrame(mid, text="Synthesis Sections to Mutate (Uncheck to Lock)", padding=6)
+        rm_locks.pack(fill=tk.X, pady=6)
+        self.var_mut_osc = tk.BooleanVar(value=True)
+        self.var_mut_flt = tk.BooleanVar(value=True)
+        self.var_mut_env = tk.BooleanVar(value=True)
+        self.var_mut_lfo = tk.BooleanVar(value=True)
+        self.var_mut_mfx = tk.BooleanVar(value=False)
+
+        ttk.Checkbutton(rm_locks, text="🌊 Oscillators 1–4 (Waves, Detune/Fat, PW, Pan, Sliders)", variable=self.var_mut_osc).pack(anchor=tk.W, pady=1)
+        ttk.Checkbutton(rm_locks, text="🎛️ Filter (Cutoff, Resonance, Env Depth)", variable=self.var_mut_flt).pack(anchor=tk.W, pady=1)
+        ttk.Checkbutton(rm_locks, text="📉 Envelopes (Filter ADSR & Amp ADSR)", variable=self.var_mut_env).pack(anchor=tk.W, pady=1)
+        ttk.Checkbutton(rm_locks, text="🕸️ LFO & 4-Slot Modulation Matrix Depths", variable=self.var_mut_lfo).pack(anchor=tk.W, pady=1)
+        ttk.Checkbutton(rm_locks, text="✨ MFX Type & Chorus/Reverb Sends", variable=self.var_mut_mfx).pack(anchor=tk.W, pady=1)
+
+        ttk.Button(
+            mid,
+            text="🎲 Mutate Source Patch In-Place",
+            command=self.on_lab_mutate_in_place,
+        ).pack(fill=tk.X, pady=(6, 3))
+
+        rm_clone = ttk.LabelFrame(mid, text="Evolve 8 Mutated Clones into Bank", padding=6)
+        rm_clone.pack(fill=tk.X, pady=4)
+        rc_row = ttk.Frame(rm_clone)
+        rc_row.pack(fill=tk.X, pady=2)
+        ttk.Label(rc_row, text="Destination Start Slot (1..249):").pack(side=tk.LEFT)
+        self.var_mut_clone_dst = tk.StringVar(value="65")
+        ttk.Spinbox(rc_row, from_=1, to=249, textvariable=self.var_mut_clone_dst, width=6).pack(side=tk.LEFT, padx=4)
+        ttk.Button(
+            rm_clone,
+            text="🧬 Generate 8 Mutated Variations of Source Patch",
+            command=self.on_lab_mutate_clone_bank,
+        ).pack(fill=tk.X, pady=(4, 2))
+
+        # --- RIGHT PANE: MATHEMATICAL WAVEFORM (DRAWING) & 16-STEP (STEP) GENERATOR ---
+        right = ttk.LabelFrame(pw, text="📐 3. Mathematical Waveform (DRAWING) & Step-LFO (STEP) Lab", padding=8)
+
+        # Visual Waveform / Step Bar Canvas
+        self.cv_wave = tk.Canvas(right, width=320, height=135, bg="#161b22", highlightthickness=1, highlightbackground="#444")
+        self.cv_wave.pack(fill=tk.X, pady=(0, 6))
+
+        # DRAWING 32-Step Section
+        dw_lf = ttk.LabelFrame(right, text="🎨 DRAWING Oscillator (Model 23 — 32-Step Custom Waveform)", padding=6)
+        dw_lf.pack(fill=tk.X, pady=4)
+
+        rdw1 = ttk.Frame(dw_lf)
+        rdw1.pack(fill=tk.X, pady=2)
+        ttk.Label(rdw1, text="Math Formula:").pack(side=tk.LEFT)
+        self.var_math_formula = tk.StringVar(value="Additive Odd/Even Harmonics")
+        self.math_formulas = [
+            "Additive Odd/Even Harmonics",
+            "Formant Vocal Wave",
+            "Wave-Folded West-Coast Sine",
+            "Bit-Crushed Staircase Saw",
+            "Hard-Sync Sweep Wave",
+            "Metallic Inharmonic Bell",
+            "FM 2-Op Phase Modulated",
+            "Smooth Random Spline",
+        ]
+        cb_mf = ttk.Combobox(rdw1, textvariable=self.var_math_formula, values=self.math_formulas, state="readonly", width=24)
+        cb_mf.pack(side=tk.LEFT, padx=4)
+        cb_mf.bind("<<ComboboxSelected>>", lambda _e: self.on_preview_math_wave())
+
+        rdw2 = ttk.Frame(dw_lf)
+        rdw2.pack(fill=tk.X, pady=2)
+        ttk.Label(rdw2, text="Wave Edge (0..127):").pack(side=tk.LEFT)
+        self.var_draw_edge = tk.StringVar(value="30")
+        ttk.Spinbox(rdw2, from_=0, to=127, textvariable=self.var_draw_edge, width=5).pack(side=tk.LEFT, padx=4)
+        ttk.Button(rdw2, text="👁️ Preview Wave", command=self.on_preview_math_wave).pack(side=tk.LEFT, padx=4)
+        ttk.Button(rdw2, text="📥 Read Slot's Wave", command=self.on_read_slot_drawing_wave).pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(
+            dw_lf,
+            text="⚡ Inject 32-Step Waveform into Source Slot (Sets Model=DRAWING)",
+            command=self.on_inject_math_wave,
+        ).pack(fill=tk.X, pady=(4, 2))
+
+        # STEP 16-Step Section
+        st_lf = ttk.LabelFrame(right, text="🪜 STEP Oscillator (Model 27 — 16-Step Sequenced LFO)", padding=6)
+        st_lf.pack(fill=tk.X, pady=4)
+
+        rst1 = ttk.Frame(st_lf)
+        rst1.pack(fill=tk.X, pady=2)
+        ttk.Label(rst1, text="16-Step Pattern:").pack(side=tk.LEFT)
+        self.var_step_pattern = tk.StringVar(value="Acid Octave Arpeggio")
+        self.step_patterns = [
+            "Trance Gate 16-Step",
+            "Acid Octave Arpeggio",
+            "Rising Filter / Pitch Ramp",
+            "Pendulum Sine Groove",
+            "Dub Polyrhythm (3x5)",
+            "Glitch Sample & Hold",
+        ]
+        cb_sp = ttk.Combobox(rst1, textvariable=self.var_step_pattern, values=self.step_patterns, state="readonly", width=22)
+        cb_sp.pack(side=tk.LEFT, padx=4)
+        cb_sp.bind("<<ComboboxSelected>>", lambda _e: self.on_preview_step_lfo())
+
+        rst2 = ttk.Frame(st_lf)
+        rst2.pack(fill=tk.X, pady=2)
+        ttk.Button(rst2, text="👁️ Preview 16 Steps", command=self.on_preview_step_lfo).pack(side=tk.LEFT, padx=2)
+        ttk.Button(rst2, text="📥 Read Slot's Steps", command=self.on_read_slot_step_lfo).pack(side=tk.LEFT, padx=4)
+
+        ttk.Button(
+            st_lf,
+            text="⚡ Inject 16-Step Sequence into Source Slot (Sets Model=STEP)",
+            command=self.on_inject_step_lfo,
+        ).pack(fill=tk.X, pady=(4, 2))
+
+        pw.add(left, minsize=310, width=380, stretch="always")
+        pw.add(mid, minsize=310, width=390, stretch="always")
+        pw.add(right, minsize=320, width=420, stretch="always")
+
+        self.last_preview_steps = []
+        self.after(150, self.on_preview_math_wave)
+
+    def _on_mut_scale_move(self, val_str):
+        v = int(float(val_str))
+        self.var_mut_amount.set(v)
+        if v <= 15:
+            desc = "Micro Drift / Analog Warmth"
+        elif v <= 35:
+            desc = "Subtle Organic Variation"
+        elif v <= 65:
+            desc = "Creative Sound Mutation"
+        else:
+            desc = "Wild Experimental Chaos"
+        self.lbl_mut_amt_val.config(text=f"{v}% ({desc})")
+
+    def _draw_wave_canvas(self, values: list, title_txt: str):
+        self.cv_wave.delete("all")
+        w = max(300, int(self.cv_wave.winfo_width()))
+        h = max(120, int(self.cv_wave.winfo_height()))
+        mid_y = h // 2
+        self.cv_wave.create_line(0, mid_y, w, mid_y, fill="#30363d", dash=(3, 3))
+        n = len(values)
+        if n == 0:
+            return
+        bar_w = (w - 20) / float(n)
+        pts = []
+        for i, v in enumerate(values):
+            x0 = 10 + i * bar_w
+            x1 = x0 + bar_w - 2
+            norm = max(-72, min(72, int(v))) / 72.0
+            y = int(mid_y - norm * (mid_y - 18))
+            color = "#2ea043" if n == 32 else "#58a6ff"
+            self.cv_wave.create_rectangle(x0, min(mid_y, y), x1, max(mid_y, y), fill=color, outline="")
+            pts.extend([x0 + bar_w * 0.5, y])
+        if len(pts) >= 4:
+            self.cv_wave.create_line(*pts, fill="#f0f6fc", width=1.5, smooth=True)
+        self.cv_wave.create_text(8, 10, anchor=tk.W, text=title_txt, fill="#c9d1d9", font=("Segoe UI", 8, "bold"))
+
+    def on_preview_math_wave(self):
+        formula = self.var_math_formula.get()
+        steps_32, edge = SH4dSVD.compute_math_wave_32(formula)
+        self.last_preview_steps = steps_32
+        self.var_draw_edge.set(str(edge))
+        self._draw_wave_canvas(steps_32, f"DRAWING 32-Step Wave: {formula} (Edge={edge})")
+
+    def on_read_slot_drawing_wave(self):
+        if not self.svd:
+            return
+        idx = max(0, min(255, int(self.var_mut_src_slot.get()) - 1))
+        dw = self.svd.get_drawing_wave(idx)
+        self.last_preview_steps = dw["steps"]
+        self.var_draw_edge.set(str(dw["edge"]))
+        name = self.svd.get_patch_name(idx)
+        self._draw_wave_canvas(dw["steps"], f"Slot #{idx+1:03d} ({name}) 32-Step Wave (Edge={dw['edge']})")
+
+    def on_inject_math_wave(self):
+        if not self.svd:
+            return
+        idx = max(0, min(255, int(self.var_mut_src_slot.get()) - 1))
+        if not self.last_preview_steps or len(self.last_preview_steps) != 32:
+            self.on_preview_math_wave()
+        edge = max(0, min(127, int(self.var_draw_edge.get())))
+        self.svd.set_drawing_wave(idx, self.last_preview_steps, edge, switch_model=True)
+        self._select_and_refresh_patch(idx)
+        self.lbl_gen_log.config(text=f"Injected 32-Step Math Wave into Slot #{idx+1:03d} ({self.svd.get_patch_name(idx)}).")
+
+    def on_preview_step_lfo(self):
+        pat_name = self.var_step_pattern.get()
+        vals_16, _curves_16 = SH4dSVD.compute_step_lfo_16(pat_name)
+        self.last_preview_step_lfo = (vals_16, _curves_16)
+        self._draw_wave_canvas(vals_16, f"STEP 16-Step Sequence: {pat_name}")
+
+    def on_read_slot_step_lfo(self):
+        if not self.svd:
+            return
+        idx = max(0, min(255, int(self.var_mut_src_slot.get()) - 1))
+        st = self.svd.get_step_lfo_data(idx)
+        self.last_preview_step_lfo = (st["vals"], st["curves"])
+        name = self.svd.get_patch_name(idx)
+        self._draw_wave_canvas(st["vals"], f"Slot #{idx+1:03d} ({name}) 16-Step Sequence")
+
+    def on_inject_step_lfo(self):
+        if not self.svd:
+            return
+        idx = max(0, min(255, int(self.var_mut_src_slot.get()) - 1))
+        if not hasattr(self, "last_preview_step_lfo"):
+            self.on_preview_step_lfo()
+        vals_16, curves_16 = self.last_preview_step_lfo
+        self.svd.set_step_lfo_data(idx, vals_16, curves_16, switch_model=True)
+        self._select_and_refresh_patch(idx)
+        self.lbl_gen_log.config(text=f"Injected 16-Step Sequence into Slot #{idx+1:03d} ({self.svd.get_patch_name(idx)}).")
+
+    def on_find_next_init_slot(self):
+        if not self.svd:
+            return
+        for i in range(256):
+            if self.svd.get_patch_name(i).strip().upper() == "INIT TONE":
+                self.var_gen_single_slot.set(str(i + 1))
+                self.lbl_gen_log.config(text=f"Found empty INIT TONE at Slot #{i+1:03d} (U{(i//16)+1:02d}-{(i%16)+1:02d}).")
+                return
+        messagebox.showinfo("No INIT TONE Found", "All 256 User Patch slots already contain named patches.")
+
+    def on_sync_mut_slot_from_tab2(self):
+        sel = self.tree_patch.selection()
+        if sel:
+            idx = int(sel[0])
+            self.var_mut_src_slot.set(str(idx + 1))
+            self.lbl_gen_log.config(text=f"Synced Source Slot to #{idx+1:03d} ({self.svd.get_patch_name(idx)}).")
+
+    def _select_and_refresh_patch(self, idx: int):
+        self.refresh_patches()
+        self.refresh_patterns()
+        sid = str(idx)
+        if self.tree_patch.exists(sid):
+            self.tree_patch.selection_set(sid)
+            self.tree_patch.see(sid)
+            self.on_select_patch(None)
+
+    def on_gen_single_preset(self):
+        if not self.svd:
+            return
+        idx = max(0, min(255, int(self.var_gen_single_slot.get()) - 1))
+        genre = self.var_gen_genre.get()
+        cname = self.var_gen_custom_name.get().strip() or None
+        p = self.svd.generate_smart_preset(idx, genre, custom_name=cname)
+        self._select_and_refresh_patch(idx)
+        if p["osc_model"] == 23:
+            self.var_mut_src_slot.set(str(idx + 1))
+            self.on_read_slot_drawing_wave()
+        elif p["osc_model"] == 27:
+            self.var_mut_src_slot.set(str(idx + 1))
+            self.on_read_slot_step_lfo()
+        self.lbl_gen_log.config(
+            text=f"✅ Generated '{p['name']}' ({p['osc_model_label']}) at Slot #{idx+1:03d} (Cutoff={p['cutoff']}, Reso={p['resonance']})."
+        )
+
+    def on_gen_and_export_file(self):
+        if not self.svd:
+            return
+        idx = max(0, min(255, int(self.var_gen_single_slot.get()) - 1))
+        backup_raw = self.svd.get_patch_bytes(idx)
+        genre = self.var_gen_genre.get()
+        cname = self.var_gen_custom_name.get().strip() or None
+        p = self.svd.generate_smart_preset(idx, genre, custom_name=cname)
+        gen_bytes = self.svd.get_patch_bytes(idx)
+        # Restore slot if user only wanted standalone export, or keep it
+        safe_name = p["name"].replace(" ", "_").replace("#", "")
+        out_p = filedialog.asksaveasfilename(
+            title="Export Generated SH-4d Patch",
+            defaultextension=".sh4d_patch",
+            initialfile=f"{safe_name}.sh4d_patch",
+            filetypes=[("SH-4d Patch", "*.sh4d_patch")],
+        )
+        if out_p:
+            with open(out_p, "wb") as f:
+                f.write(gen_bytes)
+            self._select_and_refresh_patch(idx)
+            self.lbl_gen_log.config(text=f"💾 Generated & exported '{p['name']}' to {os.path.basename(out_p)}.")
+        else:
+            self.svd.set_patch_bytes(idx, backup_raw)
+
+    def on_gen_batch_bank(self):
+        if not self.svd:
+            return
+        start_idx = max(0, min(255, int(self.var_gen_bank_start.get()) - 1))
+        count = 16 if "16" in self.var_gen_bank_count.get() else 8
+        end_idx = min(256, start_idx + count)
+        genre = self.var_gen_genre.get()
+        created = []
+        for i in range(start_idx, end_idx):
+            p = self.svd.generate_smart_preset(i, genre)
+            created.append(p["name"])
+        self._select_and_refresh_patch(start_idx)
+        self.lbl_gen_log.config(
+            text=f"🚀 Batch generated {len(created)} presets in Slots #{start_idx+1:03d}..#{end_idx:03d} ({created[0]} .. {created[-1]})."
+        )
+        messagebox.showinfo(
+            "Batch Bank Generated",
+            f"Generated {len(created)} new '{genre}' patches in Slots #{start_idx+1:03d} to #{end_idx:03d}!\n\n"
+            f"Click 'Save (.bak)' in the top toolbar when you want to write to your .SVD file.",
+        )
+
+    def on_lab_mutate_in_place(self):
+        if not self.svd:
+            return
+        idx = max(0, min(255, int(self.var_mut_src_slot.get()) - 1))
+        amt = int(self.var_mut_amount.get())
+        p = self.svd.mutate_patch(
+            idx,
+            amount_pct=amt,
+            mut_osc=self.var_mut_osc.get(),
+            mut_flt=self.var_mut_flt.get(),
+            mut_env=self.var_mut_env.get(),
+            mut_lfo_mtx=self.var_mut_lfo.get(),
+            mut_mfx=self.var_mut_mfx.get(),
+        )
+        self._select_and_refresh_patch(idx)
+        self.lbl_gen_log.config(
+            text=f"🎲 Mutated Slot #{idx+1:03d} ('{p['name']}') by {amt}% -> Cutoff={p['cutoff']}, Reso={p['resonance']}."
+        )
+
+    def on_lab_mutate_clone_bank(self):
+        if not self.svd:
+            return
+        src_idx = max(0, min(255, int(self.var_mut_src_slot.get()) - 1))
+        dst_start = max(0, min(248, int(self.var_mut_clone_dst.get()) - 1))
+        amt = int(self.var_mut_amount.get())
+        src_bytes = self.svd.get_patch_bytes(src_idx)
+        base_name = self.svd.get_patch_name(src_idx)[:12].strip()
+        for k in range(8):
+            d_idx = dst_start + k
+            self.svd.set_patch_bytes(d_idx, src_bytes)
+            v_name = f"{base_name} M{k+1}"
+            self.svd.mutate_patch(
+                d_idx,
+                amount_pct=amt,
+                mut_osc=self.var_mut_osc.get(),
+                mut_flt=self.var_mut_flt.get(),
+                mut_env=self.var_mut_env.get(),
+                mut_lfo_mtx=self.var_mut_lfo.get(),
+                mut_mfx=self.var_mut_mfx.get(),
+                new_name=v_name,
+            )
+        self._select_and_refresh_patch(dst_start)
+        self.lbl_gen_log.config(
+            text=f"🧬 Evolved 8 mutated clones of '{base_name}' ({amt}%) into Slots #{dst_start+1:03d}..#{dst_start+8:03d}."
+        )
+        messagebox.showinfo(
+            "8 Mutated Variations Created",
+            f"Created 8 mutated clones of '{base_name}' ({amt}% intensity) in Slots #{dst_start+1:03d} to #{dst_start+8:03d}!",
+        )
+
+    def on_quick_mutate_patch(self):
+        sel = self.tree_patch.selection()
+        if not sel or not self.svd:
+            return
+        idx = int(sel[0])
+        p = self.svd.mutate_patch(idx, amount_pct=20)
+        self._select_and_refresh_patch(idx)
+        self.lbl_status.config(text=f"🎲 Mutated #{idx+1:03d} '{p['name']}' (20%)")
+
+    def on_quick_randomize_patch(self):
+        sel = self.tree_patch.selection()
+        if not sel or not self.svd:
+            return
+        idx = int(sel[0])
+        p = self.svd.generate_smart_preset(idx, "🎲 Mixed / Surprise Me")
+        self._select_and_refresh_patch(idx)
+        self.lbl_status.config(text=f"✨ Generated '{p['name']}' ({p['osc_model_label']}) in #{idx+1:03d}")
 
 
 def print_summary(svd: SH4dSVD):
