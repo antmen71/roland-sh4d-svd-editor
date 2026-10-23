@@ -557,14 +557,34 @@ class SH4dSVD:
                 self.data[off + s_off] = val
                 self.data[off + 0x670 + s_idx] = val
 
-        # 4 Oscillators deep parameters (0x720 + o * 44 & partial mirror)
+        # 4 Oscillators deep parameters (0x720 + o * 44 & partial DSP mirror at 0x0DA + o*0x7C and 0x5E0 + o*0x24)
+        wave_to_dsp = {
+            0: (1, 0),
+            1: (1, 0),
+            2: (1, 1),
+            3: (1, 2),
+            4: (1, 3),
+            5: (1, 4),
+            6: (1, 5),
+            7: (1, 6),
+            8: (1, 0),
+            9: (1, 1),
+            10: (3, 8),
+            11: (4, 8),
+        }
+        cur_model = self.data[off + 0x08]
         if "oscs" in kw and kw["oscs"] is not None:
             for o, od in enumerate(kw["oscs"][:4]):
                 o_base = off + 0x720 + o * 44
                 p_coarse_off = off + 0x0DA + o * 0x7C
+                dsp_base = off + 0x5E0 + o * 0x24
                 if "wave" in od:
                     w_val = max(0, min(255, int(od["wave"])))
                     self.data[o_base + 0] = w_val
+                    if cur_model == 16 and w_val in wave_to_dsp:
+                        eng_t, sub_w = wave_to_dsp[w_val]
+                        self.data[dsp_base + 0] = eng_t
+                        self.data[dsp_base + 1] = sub_w
                 if "coarse" in od:
                     c_u8 = u8_from_s8(max(-48, min(48, int(od["coarse"]))))
                     self.data[o_base + 1] = c_u8
@@ -574,11 +594,18 @@ class SH4dSVD:
                     self.data[o_base + 2] = f_u8
                     self.data[p_coarse_off + 1] = f_u8
                 if "pw" in od:
-                    self.data[o_base + 3] = max(0, min(127, int(od["pw"])))
+                    pw_val = max(0, min(127, int(od["pw"])))
+                    self.data[o_base + 3] = pw_val
+                    if cur_model == 16:
+                        self.data[dsp_base + 4] = max(0, min(127, 64 + pw_val))
                 if "pwm" in od:
                     self.data[o_base + 4] = max(0, min(127, int(od["pwm"])))
                 if "fat" in od:
-                    self.data[o_base + 5] = max(0, min(127, int(od["fat"])))
+                    fat_val = max(0, min(127, int(od["fat"])))
+                    self.data[o_base + 5] = fat_val
+                    if cur_model == 16:
+                        self.data[dsp_base + 6] = max(0, min(127, 64 + fat_val))
+                        self.data[dsp_base + 13] = max(0, min(127, 64 + fat_val))
                 if "pan" in od:
                     self.data[o_base + 6] = max(0, min(127, int(od["pan"])))
 
@@ -600,7 +627,7 @@ class SH4dSVD:
                             pm_base = off + 0x114 + p * 0x7C + sl * 12
                             self.data[pm_base + (d_i - 1) * 2 + 2] = dep_u8
 
-        # Filter parameters written across all 4 Partials (stride 0x7C = 124) AND Master Tone Macro (0x6AF, 0x6BC, 0x6BE)
+        # Filter parameters written across all 4 Partials (stride 0x7C = 124) AND Master Tone Macro (0x6C0, 0x6BC, 0x6BE)
         for p in range(4):
             p_base = off + 0x100 + p * 0x7C
             if "cutoff" in kw and kw["cutoff"] is not None:
@@ -608,15 +635,15 @@ class SH4dSVD:
                 self.data[p_base : p_base + 2] = struct.pack("<H", val)
                 self.data[off + 0x6BC : off + 0x6BE] = struct.pack("<H", val)
             if "flt_env_depth" in kw and kw["flt_env_depth"] is not None:
-                fenv_val = max(0, min(255, int(kw["flt_env_depth"])))
+                fenv_val = u8_from_s8(max(-120, min(120, int(kw["flt_env_depth"]))))
                 self.data[p_base + 2] = fenv_val
-                self.data[off + 0x6AF] = fenv_val
+                self.data[off + 0x6C0] = fenv_val
             if "resonance" in kw and kw["resonance"] is not None:
                 val = max(0, min(1023, int(kw["resonance"])))
                 self.data[p_base + 6 : p_base + 8] = struct.pack("<H", val)
                 self.data[off + 0x6BE : off + 0x6C0] = struct.pack("<H", val)
 
-        # Amp ADSR written across all 4 Partials (stride 0x18 = 24) AND Master Tone Macro (0x6C2..0x6C9)
+        # Amp ADSR written across all 4 Partials (stride 0x18 = 24) AND Master Tone Macro (0x6C2..0x6CB)
         # CRITICAL: a_base + 1 (0x329, 0x341, 0x359, 0x371) is Partial Amp Output Enable (MUST BE 1)!
         # Amp Attack is at a_base + 6 (0x32E), Decay at +10 (0x332), Sustain at +12 (0x334), Release at +20 (0x33C).
         for p in range(4):
@@ -627,19 +654,26 @@ class SH4dSVD:
             if "amp_atk" in kw and kw["amp_atk"] is not None:
                 v_aa = max(0, min(1023, int(kw["amp_atk"])))
                 self.data[a_base + 6 : a_base + 8] = struct.pack("<H", v_aa)
-                self.data[off + 0x6C2 : off + 0x6C4] = struct.pack("<H", v_aa)
+                m_aa = int(round((v_aa / 1023.0) ** 0.5 * 1023)) if v_aa > 0 else 0
+                self.data[off + 0x6C2 : off + 0x6C4] = struct.pack("<H", m_aa)
             if "amp_dec" in kw and kw["amp_dec"] is not None:
                 v_ad = max(0, min(1023, int(kw["amp_dec"])))
                 self.data[a_base + 10 : a_base + 12] = struct.pack("<H", v_ad)
-                self.data[off + 0x6C4 : off + 0x6C6] = struct.pack("<H", v_ad)
+                m_ad = int(round((v_ad / 1023.0) ** 0.5 * 1023)) if v_ad > 0 else 0
+                self.data[off + 0x6C4 : off + 0x6C6] = struct.pack("<H", m_ad)
+                env_curve_byte = max(1, min(63, v_ad)) if v_ad < 120 else 0
+                self.data[a_base + 0] = env_curve_byte
+                self.data[off + 0x6CB] = env_curve_byte
             if "amp_sus" in kw and kw["amp_sus"] is not None:
                 v_as = max(0, min(1023, int(kw["amp_sus"])))
                 self.data[a_base + 12 : a_base + 14] = struct.pack("<H", v_as)
-                self.data[off + 0x6C8 : off + 0x6CA] = struct.pack("<H", v_as)
+                m_as = int(round((v_as / 1023.0) ** 0.5 * 1023)) if v_as > 0 else 0
+                self.data[off + 0x6C8 : off + 0x6CA] = struct.pack("<H", m_as)
             if "amp_rel" in kw and kw["amp_rel"] is not None:
                 v_ar = max(0, min(1023, int(kw["amp_rel"])))
                 self.data[a_base + 20 : a_base + 22] = struct.pack("<H", v_ar)
-                self.data[off + 0x6C6 : off + 0x6C8] = struct.pack("<H", v_ar)
+                m_ar = int(round((v_ar / 1023.0) ** 0.5 * 1023)) if v_ar > 0 else 0
+                self.data[off + 0x6C6 : off + 0x6C8] = struct.pack("<H", m_ar)
 
         # Filter ADSR written across all 4 Partials (stride 0x10 = 16) AND Master Tone Macro (0x6A6..0x6AD)
         # CRITICAL: f_base + 2 (0x38A) is Filter Attack, f_base + 4 (0x38C) is Filter Slope/Enable (30),
@@ -654,19 +688,23 @@ class SH4dSVD:
             if "flt_atk" in kw and kw["flt_atk"] is not None:
                 v_fa = max(0, min(1023, int(kw["flt_atk"])))
                 self.data[f_base + 2 : f_base + 4] = struct.pack("<H", v_fa)
-                self.data[off + 0x6A6 : off + 0x6A8] = struct.pack("<H", v_fa)
+                m_fa = int(round((v_fa / 1023.0) ** 0.5 * 1023)) if v_fa > 0 else 0
+                self.data[off + 0x6A6 : off + 0x6A8] = struct.pack("<H", m_fa)
             if "flt_dec" in kw and kw["flt_dec"] is not None:
                 v_fd = max(0, min(1023, int(kw["flt_dec"])))
                 self.data[f_base + 6 : f_base + 8] = struct.pack("<H", v_fd)
-                self.data[off + 0x6A8 : off + 0x6AA] = struct.pack("<H", v_fd)
+                m_fd = int(round((v_fd / 1023.0) ** 0.5 * 1023)) if v_fd > 0 else 0
+                self.data[off + 0x6A8 : off + 0x6AA] = struct.pack("<H", m_fd)
             if "flt_sus" in kw and kw["flt_sus"] is not None:
                 v_fs = max(0, min(1023, int(kw["flt_sus"])))
                 self.data[f_base + 8 : f_base + 10] = struct.pack("<H", v_fs)
-                self.data[off + 0x6AC : off + 0x6AE] = struct.pack("<H", v_fs)
+                m_fs = int(round((v_fs / 1023.0) ** 0.5 * 1023)) if v_fs > 0 else 0
+                self.data[off + 0x6AC : off + 0x6AE] = struct.pack("<H", m_fs)
             if "flt_rel" in kw and kw["flt_rel"] is not None:
                 v_fr = max(0, min(1023, int(kw["flt_rel"])))
                 self.data[f_base + 14 : f_base + 16] = struct.pack("<H", v_fr)
-                self.data[off + 0x6AA : off + 0x6AC] = struct.pack("<H", v_fr)
+                m_fr = int(round((v_fr / 1023.0) ** 0.5 * 1023)) if v_fr > 0 else 0
+                self.data[off + 0x6AA : off + 0x6AC] = struct.pack("<H", m_fr)
 
         # LFO written across all 4 Partials (stride 0x68 = 104)
         for p in range(4):
@@ -1145,6 +1183,15 @@ class SH4dSVD:
                 return i
         return 0
 
+    def set_patch_Bytes_from_valid(self, target_idx: int, preferred_idx: int):
+        """Copies a valid non-init hardware template into target_idx."""
+        if 0 <= preferred_idx < 256 and preferred_idx != target_idx:
+            if self.get_patch_name(preferred_idx).strip().upper() != "INIT TONE":
+                self.set_patch_bytes(target_idx, self.get_patch_bytes(preferred_idx))
+                return
+        tmpl = self.find_template_patch_idx(16)
+        self.set_patch_bytes(target_idx, self.get_patch_bytes(tmpl))
+
     def get_drawing_wave(self, idx: int) -> dict:
         """Reads 32-step custom waveform (-72..+72) and Wave Edge (0..127) for DRAWING Model (23)."""
         off = self.get_patch_offset(idx)
@@ -1456,44 +1503,185 @@ class SH4dSVD:
             )
         elif "Pluck" in genre or "Dub Techno" in genre:
             is_dub = "Dub" in genre
-            name = custom_name or (f"Dub Chord #{sfx}" if is_dub else f"Synth Pluck #{sfx}")
-            oscs = [
-                {"wave": 6 if is_dub else 10, "coarse": 0, "fine": -9, "pw": 70, "pwm": 15, "fat": 60, "pan": 46},
-                {"wave": 2, "coarse": 7 if is_dub else 0, "fine": 9, "pw": 80, "pwm": 20, "fat": 50, "pan": 82},
-                {"wave": 1, "coarse": 12 if not is_dub else 3, "fine": -5, "pw": 64, "pwm": 0, "fat": 40, "pan": 64},
-                {"wave": 11 if is_dub else 3, "coarse": -12, "fine": 0, "pw": 0, "pwm": 0, "fat": 30, "pan": 64},
-            ]
-            self.set_patch_params(
-                target_idx,
-                name=name,
-                osc_model=16,
-                category=34,
-                patch_level=114,
-                mono_poly=1,
-                legato_sw=0,
-                porta_sw=0,
-                analog_feel=random.randint(20, 60),
-                oscs=oscs,
-                slider1=125,
-                slider2=115,
-                slider3=random.randint(85, 120),
-                slider4=random.randint(35, 75) if is_dub else random.randint(70, 105),
-                cutoff=random.randint(320, 620),
-                resonance=random.randint(320, 580) if is_dub else random.randint(160, 380),
-                flt_env_depth=random.randint(72, 98),
-                flt_atk=0,
-                flt_dec=random.randint(220, 480),
-                flt_sus=random.randint(120, 360),
-                flt_rel=random.randint(220, 480),
-                amp_atk=0,
-                amp_dec=random.randint(280, 560),
-                amp_sus=random.randint(160, 440),
-                amp_rel=random.randint(240, 520),
-                mfx_type=12 if is_dub else 87,
-                mfx_sw=1,
-                mfx_cho=random.randint(45, 95),
-                mfx_rev=random.randint(80, 127) if is_dub else random.randint(45, 90),
-            )
+            # 8 distinct native-modeled Pluck / Stab sub-archetypes so every slot in a 16-patch bank sounds genuinely different!
+            archetype = target_idx % 8
+            if is_dub:
+                dub_chords = [
+                    (0, 3, 7, -12, "Min7 Dub"),
+                    (0, 3, 10, 7, "Deep Dub"),
+                    (0, 7, 12, -12, "5th Stab"),
+                    (0, 5, 10, -12, "Quartal"),
+                ]
+                c1, c2, c3, c4, c_tag = random.choice(dub_chords)
+                w1, w2, w3, w4 = random.choice([(6, 2, 1, 11), (10, 6, 2, 11), (1, 2, 6, 4), (2, 6, 10, 11)])
+                oscs = [
+                    {"wave": w1, "coarse": c1, "fine": -random.randint(4, 14), "pw": random.randint(40, 85), "pwm": random.randint(10, 30), "fat": random.randint(30, 75), "pan": 46},
+                    {"wave": w2, "coarse": c2, "fine": random.randint(4, 14), "pw": random.randint(40, 90), "pwm": random.randint(10, 30), "fat": random.randint(25, 70), "pan": 82},
+                    {"wave": w3, "coarse": c3, "fine": -random.randint(3, 10), "pw": 64, "pwm": 0, "fat": random.randint(20, 60), "pan": 54},
+                    {"wave": w4, "coarse": c4, "fine": 0, "pw": 0, "pwm": 0, "fat": random.randint(20, 50), "pan": 74},
+                ]
+                name = custom_name or f"{c_tag} #{sfx}"
+                self.set_patch_Bytes_from_valid(target_idx, random.choice([3, 5, 8, 20]))
+                self.set_patch_params(
+                    target_idx,
+                    name=name,
+                    osc_model=16,
+                    category=34,
+                    patch_level=random.randint(92, 104),
+                    mono_poly=1,
+                    legato_sw=0,
+                    porta_sw=0,
+                    analog_feel=random.randint(25, 70),
+                    oscs=oscs,
+                    slider1=random.randint(70, 95),
+                    slider2=random.randint(65, 92),
+                    slider3=random.randint(55, 85),
+                    slider4=random.randint(20, 55),
+                    cutoff=random.randint(160, 420),
+                    resonance=random.randint(240, 680),
+                    flt_env_depth=random.randint(42, 95),
+                    flt_atk=random.randint(0, 12),
+                    flt_dec=random.randint(90, 260),
+                    flt_sus=random.randint(15, 110),
+                    flt_rel=random.randint(80, 260),
+                    amp_atk=0,
+                    amp_dec=random.randint(35, 150),
+                    amp_sus=random.randint(20, 140),
+                    amp_rel=random.randint(40, 220),
+                    mfx_type=random.choice([12, 75, 84, 92]),
+                    mfx_sw=1,
+                )
+            else:
+                # 8 Distinct Pluck Archetypes modeled after native SH-4d plucks (#04 Mod Apart, #06 Bright Pluck, #21 Kimene, #14 Drawing Bell, etc.)
+                if archetype == 0:
+                    # 1. Kimene Warm Analog Short Pluck (template #21 = idx 20)
+                    self.set_patch_Bytes_from_valid(target_idx, 20)
+                    name = custom_name or f"AnalogPlk #{sfx}"
+                    oscs = [
+                        {"wave": 1, "coarse": 0, "fine": -random.randint(4, 10), "pw": 64, "pwm": 0, "fat": random.randint(20, 55), "pan": 52},
+                        {"wave": 2, "coarse": 0, "fine": random.randint(4, 10), "pw": random.randint(40, 85), "pwm": 18, "fat": random.randint(15, 45), "pan": 76},
+                        {"wave": 2, "coarse": -12, "fine": 0, "pw": 64, "pwm": 0, "fat": 20, "pan": 64},
+                        {"wave": 11, "coarse": 0, "fine": 0, "pw": 0, "pwm": 0, "fat": 0, "pan": 64},
+                    ]
+                    self.set_patch_params(
+                        target_idx, name=name, osc_model=16, category=34, patch_level=98, mono_poly=1,
+                        oscs=oscs, slider1=92, slider2=82, slider3=55, slider4=22,
+                        cutoff=random.randint(180, 290), resonance=random.randint(180, 440), flt_env_depth=random.randint(48, 78),
+                        flt_atk=0, flt_dec=random.randint(95, 165), flt_sus=random.randint(25, 75), flt_rel=random.randint(40, 110),
+                        amp_atk=0, amp_dec=random.randint(40, 95), amp_sus=random.randint(15, 65), amp_rel=random.randint(0, 60),
+                        mfx_type=84, mfx_sw=1,
+                    )
+                elif archetype == 1:
+                    # 2. Mod Apart PWM Stereo Pluck (template #04 = idx 3)
+                    self.set_patch_Bytes_from_valid(target_idx, 3)
+                    name = custom_name or f"ModPluck #{sfx}"
+                    oscs = [
+                        {"wave": 10, "coarse": 0, "fine": -random.randint(6, 14), "pw": 64, "pwm": 20, "fat": random.randint(45, 85), "pan": 42},
+                        {"wave": 1, "coarse": 0, "fine": random.randint(6, 14), "pw": 64, "pwm": 15, "fat": random.randint(35, 75), "pan": 86},
+                        {"wave": 2, "coarse": 12, "fine": -4, "pw": random.randint(45, 75), "pwm": 25, "fat": 30, "pan": 64},
+                        {"wave": 3, "coarse": -12, "fine": 0, "pw": 0, "pwm": 0, "fat": 20, "pan": 64},
+                    ]
+                    self.set_patch_params(
+                        target_idx, name=name, osc_model=16, category=34, patch_level=96, mono_poly=1,
+                        oscs=oscs, slider1=86, slider2=82, slider3=62, slider4=48,
+                        cutoff=random.randint(310, 460), resonance=random.randint(40, 220), flt_env_depth=random.randint(35, 68),
+                        flt_atk=0, flt_dec=random.randint(120, 210), flt_sus=random.randint(80, 220), flt_rel=random.randint(110, 220),
+                        amp_atk=0, amp_dec=random.randint(18, 45), amp_sus=random.randint(60, 145), amp_rel=random.randint(0, 45),
+                        mfx_type=87, mfx_sw=1,
+                    )
+                elif archetype == 2:
+                    # 3. Bright Resonant Tape-Echo Pluck (template #06 = idx 5)
+                    self.set_patch_Bytes_from_valid(target_idx, 5)
+                    name = custom_name or f"EchoPluck #{sfx}"
+                    oscs = [
+                        {"wave": 6, "coarse": 0, "fine": -8, "pw": 70, "pwm": 15, "fat": 55, "pan": 48},
+                        {"wave": 10, "coarse": 12, "fine": 8, "pw": 64, "pwm": 10, "fat": 65, "pan": 80},
+                        {"wave": 2, "coarse": 0, "fine": 0, "pw": 85, "pwm": 30, "fat": 40, "pan": 64},
+                        {"wave": 11, "coarse": 0, "fine": 0, "pw": 0, "pwm": 0, "fat": 0, "pan": 64},
+                    ]
+                    self.set_patch_params(
+                        target_idx, name=name, osc_model=16, category=34, patch_level=94, mono_poly=1,
+                        oscs=oscs, slider1=65, slider2=78, slider3=45, slider4=35,
+                        cutoff=random.randint(580, 860), resonance=random.randint(520, 880), flt_env_depth=random.randint(25, 60),
+                        flt_atk=0, flt_dec=random.randint(110, 190), flt_sus=random.randint(40, 110), flt_rel=random.randint(120, 220),
+                        amp_atk=0, amp_dec=random.randint(18, 42), amp_sus=random.randint(70, 140), amp_rel=random.randint(0, 40),
+                        mfx_type=12, mfx_sw=1,
+                    )
+                elif archetype == 3:
+                    # 4. 5th Interval Prog House Pluck (OSC2 = +7 semitones, MFX 75 Delay+Chorus)
+                    self.set_patch_Bytes_from_valid(target_idx, 3)
+                    name = custom_name or f"FifthPlk #{sfx}"
+                    oscs = [
+                        {"wave": 10, "coarse": 0, "fine": -10, "pw": 64, "pwm": 0, "fat": 75, "pan": 40},
+                        {"wave": 10, "coarse": 7, "fine": 10, "pw": 64, "pwm": 0, "fat": 70, "pan": 88},
+                        {"wave": 2, "coarse": -12, "fine": 0, "pw": 75, "pwm": 15, "fat": 40, "pan": 64},
+                        {"wave": 4, "coarse": 19, "fine": 0, "pw": 0, "pwm": 0, "fat": 30, "pan": 64},
+                    ]
+                    self.set_patch_params(
+                        target_idx, name=name, osc_model=16, category=34, patch_level=94, mono_poly=1,
+                        oscs=oscs, slider1=88, slider2=76, slider3=60, slider4=42,
+                        cutoff=random.randint(260, 440), resonance=random.randint(120, 320), flt_env_depth=random.randint(55, 88),
+                        flt_atk=0, flt_dec=random.randint(110, 200), flt_sus=random.randint(30, 90), flt_rel=random.randint(80, 180),
+                        amp_atk=0, amp_dec=random.randint(25, 70), amp_sus=random.randint(30, 95), amp_rel=random.randint(20, 90),
+                        mfx_type=75, mfx_sw=1,
+                    )
+                elif archetype == 4:
+                    # 5. Custom Drawn Wave Pluck (Model 23: DRAWING, template #14 = idx 13)
+                    self.set_patch_Bytes_from_valid(target_idx, 13)
+                    formulas = ["Formant Vocal Wave", "Metallic Inharmonic Bell", "FM 2-Op Phase Modulated", "Hard-Sync Sweep Wave"]
+                    steps_32, edge = self.compute_math_wave_32(random.choice(formulas))
+                    self.set_drawing_wave(target_idx, steps_32, edge, switch_model=False)
+                    name = custom_name or f"DrawPluck #{sfx}"
+                    self.set_patch_params(
+                        target_idx, name=name, osc_model=23, category=34, patch_level=98, mono_poly=1,
+                        slider1=random.randint(75, 110), slider2=edge, slider3=random.randint(30, 75), slider4=random.randint(0, 25),
+                        cutoff=random.randint(340, 620), resonance=random.randint(120, 380), flt_env_depth=random.randint(40, 75),
+                        flt_atk=0, flt_dec=random.randint(140, 320), flt_sus=random.randint(40, 160), flt_rel=random.randint(60, 180),
+                        amp_atk=0, amp_dec=random.randint(30, 85), amp_sus=random.randint(40, 180), amp_rel=random.randint(40, 140),
+                        mfx_type=17, mfx_sw=1,
+                    )
+                elif archetype == 5:
+                    # 6. SH-101 Punchy Mono/Arp Pluck (Model 19: SH-101, template #16 = idx 15)
+                    self.set_patch_Bytes_from_valid(target_idx, 15)
+                    name = custom_name or f"SH101Plk #{sfx}"
+                    self.set_patch_params(
+                        target_idx, name=name, osc_model=19, category=34, patch_level=98, mono_poly=1,
+                        slider1=random.randint(60, 110), slider2=random.randint(70, 115), slider3=random.randint(50, 95), slider4=random.randint(0, 25),
+                        cutoff=random.randint(200, 380), resonance=random.randint(380, 720), flt_env_depth=random.randint(55, 95),
+                        flt_atk=0, flt_dec=random.randint(90, 220), flt_sus=random.randint(0, 60), flt_rel=random.randint(40, 140),
+                        amp_atk=0, amp_dec=random.randint(35, 110), amp_sus=random.randint(0, 60), amp_rel=random.randint(10, 80),
+                        mfx_type=34, mfx_sw=1,
+                    )
+                elif archetype == 6:
+                    # 7. Wavetable Digital Pluck (Model 24: WAVETABLE, template #15 = idx 14)
+                    self.set_patch_Bytes_from_valid(target_idx, 14)
+                    name = custom_name or f"WavePluck #{sfx}"
+                    self.set_patch_params(
+                        target_idx, name=name, osc_model=24, category=34, patch_level=96, mono_poly=1,
+                        slider1=random.randint(25, 115), slider2=random.randint(40, 110), slider3=random.randint(40, 85), slider4=random.randint(0, 20),
+                        cutoff=random.randint(320, 640), resonance=random.randint(160, 460), flt_env_depth=random.randint(45, 85),
+                        flt_atk=0, flt_dec=random.randint(100, 240), flt_sus=random.randint(20, 90), flt_rel=random.randint(60, 180),
+                        amp_atk=0, amp_dec=random.randint(25, 80), amp_sus=random.randint(20, 90), amp_rel=random.randint(20, 110),
+                        mfx_type=26, mfx_sw=1,
+                    )
+                else:
+                    # 8. Minor Chord Stab Pluck (template #09 = idx 8)
+                    self.set_patch_Bytes_from_valid(target_idx, 8)
+                    name = custom_name or f"ChordPlk #{sfx}"
+                    oscs = [
+                        {"wave": 6, "coarse": 0, "fine": -7, "pw": 64, "pwm": 12, "fat": 50, "pan": 45},
+                        {"wave": 10, "coarse": 3, "fine": 7, "pw": 64, "pwm": 0, "fat": 65, "pan": 83},
+                        {"wave": 5, "coarse": 7, "fine": -5, "pw": 64, "pwm": 0, "fat": 45, "pan": 55},
+                        {"wave": 2, "coarse": -12, "fine": 0, "pw": 70, "pwm": 0, "fat": 30, "pan": 73},
+                    ]
+                    self.set_patch_params(
+                        target_idx, name=name, osc_model=16, category=34, patch_level=94, mono_poly=1,
+                        oscs=oscs, slider1=85, slider2=80, slider3=75, slider4=50,
+                        cutoff=random.randint(240, 460), resonance=random.randint(180, 480), flt_env_depth=random.randint(55, 92),
+                        flt_atk=0, flt_dec=random.randint(110, 220), flt_sus=random.randint(20, 80), flt_rel=random.randint(60, 160),
+                        amp_atk=0, amp_dec=random.randint(25, 75), amp_sus=random.randint(15, 75), amp_rel=random.randint(10, 80),
+                        mfx_type=92, mfx_sw=1,
+                    )
         elif "Sync Lead" in genre or "Cyberpunk" in genre:
             name = custom_name or f"Cyber Sync #{sfx}"
             self.set_patch_params(
