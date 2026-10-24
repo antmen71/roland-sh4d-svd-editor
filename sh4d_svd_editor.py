@@ -105,6 +105,22 @@ class WinMMMidiOut:
         ch = max(0, min(15, int(channel_1_16) - 1))
         self.send_short(0x80 | ch, max(0, min(127, int(note))), 0)
 
+    def send_realtime(self, status_byte: int):
+        """Sends a 1-byte MIDI System Real-Time message (0xFA=Start, 0xFB=Continue, 0xFC=Stop, 0xF8=Clock)."""
+        if self.handle:
+            self.winmm.midiOutShortMsg(self.handle, int(status_byte) & 0xFF)
+
+    def send_pattern_select(self, pat_idx_0_127: int, ctrl_channel_1_16: int = 16):
+        """Sends Roland SH-4d Pattern Bank Select (MSB=85, LSB=0, PC=pat_idx) + MIDI Song Select (0xF3)."""
+        p_idx = max(0, min(127, int(pat_idx_0_127)))
+        self.send_pc(ctrl_channel_1_16, 85, 0, p_idx)
+        self.send_short(0xF3, p_idx, 0)
+
+    def send_all_notes_off(self, channels=(8, 9, 11, 12, 13)):
+        for ch in channels:
+            self.send_cc(ch, 123, 0)
+            self.send_cc(ch, 120, 0)
+
 NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 # Standard 26 Drum Key labels on the SH-4d (MIDI Notes 36..61 = C2..C#4)
@@ -2747,7 +2763,12 @@ class SH4dEditorApp(tk.Tk):
         ]
         self.cb_midi_ch = ttk.Combobox(top, textvariable=self.var_midi_ch, values=ch_options, width=21, state="readonly")
         self.cb_midi_ch.pack(side=tk.LEFT, padx=2)
-        ttk.Button(top, text="🎹 Test Note", command=self.on_test_note).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top, text="🎹 Test Note", command=self.on_test_note).pack(side=tk.LEFT, padx=3)
+
+        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
+        ttk.Button(top, text="📌 Select Pattern", command=self.on_pc_select_pattern_on_hw).pack(side=tk.LEFT, padx=2)
+        ttk.Button(top, text="▶️ Start", command=self.on_pc_start_sequencer).pack(side=tk.LEFT, padx=2)
+        ttk.Button(top, text="⏹️ Stop", command=self.on_pc_stop_sequencer).pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
         ttk.Label(top, text="Font:").pack(side=tk.LEFT, padx=(0, 2))
@@ -3069,18 +3090,32 @@ class SH4dEditorApp(tk.Tk):
             self.part_vars.append((v_msb, v_lsb, v_pc, v_lvl, v_pan))
 
         ttk.Button(right, text="✅ Apply Pattern Changes", command=self.on_apply_pattern).grid(
-            row=11, column=0, columnspan=2, sticky="ew", pady=8
+            row=11, column=0, columnspan=2, sticky="ew", pady=(6, 4)
         )
 
-        ttk.Separator(right, orient=tk.HORIZONTAL).grid(row=12, column=0, columnspan=2, sticky="ew", pady=6)
-        ttk.Label(right, text="Target Pattern (e.g. 1-16 or 16):").grid(row=13, column=0, sticky=tk.W, pady=2)
+        hw_seq_frm = ttk.LabelFrame(right, text="🎹 Live Hardware Pattern Select & Transport", padding=4)
+        hw_seq_frm.grid(row=12, column=0, columnspan=2, sticky="ew", pady=4)
+        ttk.Button(hw_seq_frm, text="📌 Select Pattern on SH-4d", command=self.on_pc_select_pattern_on_hw).pack(
+            side=tk.TOP, fill=tk.X, pady=(0, 3)
+        )
+        hw_btn_row = ttk.Frame(hw_seq_frm)
+        hw_btn_row.pack(fill=tk.X)
+        ttk.Button(hw_btn_row, text="▶️ Start Sequencer", command=self.on_pc_start_sequencer).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2)
+        )
+        ttk.Button(hw_btn_row, text="⏹️ Stop Sequencer", command=self.on_pc_stop_sequencer).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0)
+        )
+
+        ttk.Separator(right, orient=tk.HORIZONTAL).grid(row=13, column=0, columnspan=2, sticky="ew", pady=6)
+        ttk.Label(right, text="Target Pattern (e.g. 1-16 or 16):").grid(row=14, column=0, sticky=tk.W, pady=2)
         self.var_pat_target = tk.StringVar(value="1-01")
-        ttk.Entry(right, textvariable=self.var_pat_target, width=8).grid(row=13, column=1, sticky=tk.W, pady=2)
+        ttk.Entry(right, textvariable=self.var_pat_target, width=8).grid(row=14, column=1, sticky=tk.W, pady=2)
         ttk.Button(right, text="🔀 Swap Entire Pattern with Target", command=self.on_swap_pattern).grid(
-            row=14, column=0, columnspan=2, sticky="ew", pady=2
+            row=15, column=0, columnspan=2, sticky="ew", pady=2
         )
         ttk.Button(right, text="📋 Copy Entire Pattern to Target", command=self.on_copy_pattern).grid(
-            row=15, column=0, columnspan=2, sticky="ew", pady=2
+            row=16, column=0, columnspan=2, sticky="ew", pady=2
         )
 
         pw.add(left, minsize=220, width=430, stretch="always")
@@ -3871,6 +3906,12 @@ class SH4dEditorApp(tk.Tk):
         self.var_cp_part_dst_pat.set(info["slot"])
         self.var_cp_step_dst_pat.set(info["slot"])
         self.refresh_steps_for_pattern_part()
+        # Sync Tab 6 Pattern Selector with Tab 1 selection
+        if hasattr(self, "cb_pc_pat") and self.cb_pc_pat["values"]:
+            vals = self.cb_pc_pat["values"]
+            if 0 <= idx < len(vals) and self._get_pc_pat_idx() != idx:
+                self.var_pc_pat.set(vals[idx])
+                self.on_pc_select_pattern()
 
     def on_select_seq_part(self, _event=None):
         self.var_cp_part_dst_part.set(self.var_seq_part.get())
@@ -4977,10 +5018,14 @@ class SH4dEditorApp(tk.Tk):
         self.var_pc_lvl = tk.StringVar(value="110")
         ttk.Spinbox(r1, from_=0, to=127, textvariable=self.var_pc_lvl, width=5).pack(side=tk.LEFT, padx=2)
 
-        ttk.Button(r1, text="💾 Update Name/BPM", command=self.on_pc_save_header).pack(side=tk.LEFT, padx=4)
+        ttk.Button(r1, text="💾 Update Name/BPM", command=self.on_pc_save_header).pack(side=tk.LEFT, padx=3)
 
-        self.btn_pc_play = ttk.Button(r1, text="▶️ Play Pattern Live (MIDI)", command=self.on_pc_toggle_live_play)
-        self.btn_pc_play.pack(side=tk.RIGHT, padx=4)
+        self.btn_pc_stop = ttk.Button(r1, text="⏹️ Stop", command=self.on_pc_stop_sequencer)
+        self.btn_pc_stop.pack(side=tk.RIGHT, padx=2)
+        self.btn_pc_play = ttk.Button(r1, text="▶️ Start", command=self.on_pc_start_sequencer)
+        self.btn_pc_play.pack(side=tk.RIGHT, padx=2)
+        self.btn_pc_sel_hw = ttk.Button(r1, text="📌 Select Pattern", command=self.on_pc_select_pattern_on_hw)
+        self.btn_pc_sel_hw.pack(side=tk.RIGHT, padx=2)
 
         r2 = ttk.Frame(top_bar)
         r2.pack(fill=tk.X, pady=(4, 1))
@@ -5347,6 +5392,12 @@ class SH4dEditorApp(tk.Tk):
         self.var_pc_bpm.set(f"{info['tempo']:.2f}")
         self.var_pc_lvl.set(str(info["level"]))
         self.on_pc_select_part()
+        # Sync Tab 1 Pattern Tree selection with Tab 6 selector
+        if hasattr(self, "tree_pat") and self.tree_pat.exists(str(pat_idx)):
+            cur_sel = self.tree_pat.selection()
+            if not cur_sel or int(cur_sel[0]) != pat_idx:
+                self.tree_pat.selection_set(str(pat_idx))
+                self.tree_pat.see(str(pat_idx))
 
     def on_pc_select_part(self):
         if not self.svd:
@@ -5710,32 +5761,70 @@ class SH4dEditorApp(tk.Tk):
         self.refresh_steps_for_pattern_part()
         self.lbl_pc_status.config(text=f"📐 Applied Euclidean E({k}, {n}, rot={rot}) with Note {note} on Part {part_idx+1}.")
 
-    def on_pc_toggle_live_play(self):
-        if self.pat_play_running:
-            self.pat_play_running = False
-            if self.pat_play_after_id:
-                try:
-                    self.after_cancel(self.pat_play_after_id)
-                except Exception:
-                    pass
-                self.pat_play_after_id = None
-            self.btn_pc_play.config(text="▶️ Play Pattern Live (MIDI)")
-            self.lbl_pc_status.config(text="⏹️ Stopped live MIDI pattern playback.")
-            return
+    def on_pc_select_pattern_on_hw(self):
+        """Selects/loads the active Pattern on the SH-4d hardware (Pattern PC + all 5 Part Tones/Kit & Mixer Levels/Pan)."""
         if not self.svd:
             return
         pat_idx = self._get_pc_pat_idx()
         info = self.svd.get_pattern_info(pat_idx)
+        # 1. Send SH-4d Pattern Bank Select (MSB=85, LSB=0, PC=pat_idx)
+        self.midi.send_pattern_select(pat_idx, ctrl_channel_1_16=16)
+        # 2. Send all 5 Part Program Changes (MSB/LSB/PC), Part Levels (CC#7) & Pans (CC#10) on Ch 8, 9, 11, 12, 13
         part_channels = [8, 9, 11, 12, 13]
         for p_i, ch in enumerate(part_channels):
             pt = info["parts"][p_i]
             self.midi.send_pc(ch, pt["msb"], pt["lsb"], pt["pc"])
             self.midi.send_cc(ch, 7, max(0, min(127, pt["level"])))
             self.midi.send_cc(ch, 10, max(0, min(127, 64 + pt["pan"])))
+        msg = f"📌 Selected Pattern {info['slot']} ('{info['name'].strip()}', {info['tempo']:.1f} BPM) on SH-4d (5 Parts Loaded)."
+        if hasattr(self, "lbl_pc_status"):
+            self.lbl_pc_status.config(text=msg)
+        self.lbl_file.config(text=msg)
+
+    def on_pc_start_sequencer(self):
+        """Selects the pattern tones on SH-4d, sends MIDI Real-Time START (0xFA), and starts the 5-part live step sequencer."""
+        if not self.svd:
+            return
+        if self.pat_play_running:
+            self.on_pc_stop_sequencer()
+        self.on_pc_select_pattern_on_hw()
+        self.midi.send_realtime(0xFA)  # MIDI Real-Time START
         self.pat_play_running = True
         self.pat_play_step = 0
-        self.btn_pc_play.config(text="⏹️ Stop Pattern Playback")
+        if hasattr(self, "btn_pc_play"):
+            self.btn_pc_play.config(text="▶️ Playing...")
+        pat_idx = self._get_pc_pat_idx()
+        info = self.svd.get_pattern_info(pat_idx)
+        msg = f"▶️ Sequencer STARTED: Pattern {info['slot']} ('{info['name'].strip()}') @ {self.var_pc_bpm.get()} BPM"
+        if hasattr(self, "lbl_pc_status"):
+            self.lbl_pc_status.config(text=msg)
+        self.lbl_file.config(text=msg)
         self._tick_pc_live_play()
+
+    def on_pc_stop_sequencer(self):
+        """Stops the 5-part live step sequencer, sends MIDI Real-Time STOP (0xFC), and silences all hanging notes."""
+        self.pat_play_running = False
+        if self.pat_play_after_id:
+            try:
+                self.after_cancel(self.pat_play_after_id)
+            except Exception:
+                pass
+            self.pat_play_after_id = None
+        self.midi.send_realtime(0xFC)  # MIDI Real-Time STOP
+        self.midi.send_all_notes_off()
+        if hasattr(self, "btn_pc_play"):
+            self.btn_pc_play.config(text="▶️ Start")
+        if hasattr(self, "lbl_pc_status"):
+            self.lbl_pc_status.config(text="⏹️ Sequencer STOPPED.")
+        self.lbl_file.config(text="⏹️ Sequencer STOPPED.")
+        if self.svd:
+            self.refresh_pc_grid_and_table()
+
+    def on_pc_toggle_live_play(self):
+        if self.pat_play_running:
+            self.on_pc_stop_sequencer()
+        else:
+            self.on_pc_start_sequencer()
 
     def _tick_pc_live_play(self):
         if not self.pat_play_running or not self.svd:
@@ -5747,6 +5836,22 @@ class SH4dEditorApp(tk.Tk):
             bpm = 128.0
         step_ms = int(round((60000.0 / bpm) / 4.0))
         gate_ms = max(35, int(step_ms * 0.72))
+
+        # Highlight current live playhead step on the 16-Step bar if visible
+        if hasattr(self, "pc_step_btns") and len(self.pc_step_btns) == 16:
+            act_part = self._get_pc_part_idx()
+            act_slen = self.svd.get_part_step_length(pat_idx, act_part)
+            cur_s = self.pat_play_step % act_slen
+            page = self.var_pc_page.get()
+            base_step = page * 16
+            for i, btn in enumerate(self.pc_step_btns):
+                s_idx = base_step + i
+                if s_idx == cur_s:
+                    btn.config(bg="#f9e2af", fg="#11111b")
+                else:
+                    st_b = self.svd.get_step_info(pat_idx, act_part, s_idx)
+                    has_n = len(st_b["notes"]) > 0
+                    btn.config(bg="#27ae60" if has_n else "#2d3436", fg="#ffffff" if has_n else "#b2bec3")
 
         # CIHAZLARIM.md SH-4d 5-Part MIDI Channels: Synth 1..4 = Ch 8, 9, 11, 12; Rhythm = Ch 13
         part_channels = [8, 9, 11, 12, 13]
