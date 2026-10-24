@@ -1072,8 +1072,8 @@ class SH4dSVD:
             n = sb[v]
             if n != 0xFF:
                 notes.append(n)
-                vels.append(sb[8 + v])
-                gates.append(sb[16 + v])
+                gates.append(sb[8 + v])
+                vels.append(sb[16 + v])
                 probs.append(sb[32 + v])
                 substeps.append(sb[40 + v])
         if part_idx == 4:
@@ -1092,7 +1092,7 @@ class SH4dSVD:
             "step": step_idx_0_63 + 1,
             "notes": notes,
             "note_names": note_names,
-            "vel": vels[0] if vels else 100,
+            "vel": vels[0] if vels else 80,
             "gate": gates[0] if gates else 80,
             "prob": probs[0] if probs else 100,
             "substep": substeps[0] if substeps else 0,
@@ -1108,7 +1108,7 @@ class SH4dSVD:
         part_idx: int,
         step_idx_0_63: int,
         notes: list,
-        vel: int = 100,
+        vel: int = 80,
         gate: int = 80,
         prob: int = 100,
         substep: int = 0,
@@ -1117,7 +1117,7 @@ class SH4dSVD:
         per_note_probs: list = None,
         per_note_substeps: list = None,
     ):
-        """Writes a 52-byte step record in PRFd (up to 8 polyphonic notes or drum hits)."""
+        """Writes a 52-byte step record in PRFd (up to 8 polyphonic notes or drum hits; sb[8..15]=Gate, sb[16..23]=Velocity)."""
         soff = self.get_step_offset(pat_idx, part_idx, step_idx_0_63)
         clean_notes = [max(0, min(127, int(n))) for n in notes[:8] if n is not None and 0 <= int(n) <= 127]
         sb = bytearray(52)
@@ -1128,8 +1128,8 @@ class SH4dSVD:
                 v_gate = per_note_gates[v] if (per_note_gates and v < len(per_note_gates)) else gate
                 v_prob = per_note_probs[v] if (per_note_probs and v < len(per_note_probs)) else prob
                 v_sub = per_note_substeps[v] if (per_note_substeps and v < len(per_note_substeps)) else substep
-                sb[8 + v] = max(1, min(127, int(v_vel)))
-                sb[16 + v] = max(1, min(127, int(v_gate)))
+                sb[8 + v] = max(1, min(127, int(v_gate)))
+                sb[16 + v] = max(1, min(127, int(v_vel)))
                 sb[32 + v] = max(0, min(100, int(v_prob)))
                 sb[40 + v] = max(0, min(13, int(v_sub)))
             else:
@@ -1343,52 +1343,52 @@ class SH4dSVD:
                 vels = []
                 gates = []
                 probs = []
-                # 1. Kick (BD1 = 36)
+                # 1. Kick (BD1 = 36) — clean hardware headroom velocity (74..80)
                 if is_break:
                     if pos16 in (0, 6, 10) or (pos16 == 14 and random.random() < 0.4):
                         notes.append(36)
-                        vels.append(118 if pos16 == 0 else 104)
+                        vels.append(80 if pos16 == 0 else 72)
                         gates.append(80)
                         probs.append(100)
                 else:
-                    if pos16 % 4 == 0 or (pos16 == 15 and random.random() < 0.35 * dens):
+                    if pos16 % 4 == 0 or (pos16 == 15 and random.random() < 0.30 * dens):
                         notes.append(36)
-                        vels.append(118 if pos16 % 4 == 0 else 88)
+                        vels.append(78 if pos16 % 4 == 0 else 58)
                         gates.append(80)
                         probs.append(100 if pos16 % 4 == 0 else 75)
                 # 2. Snare (38) & Clap (39)
                 if pos16 in (4, 12):
                     if not is_minimal:
                         notes.append(38)
-                        vels.append(108)
+                        vels.append(62)
                         gates.append(80)
                         probs.append(100)
                     notes.append(39)
-                    vels.append(112)
+                    vels.append(58)
                     gates.append(80)
                     probs.append(100)
                 elif is_break and pos16 in (7, 15) and random.random() < 0.55:
                     notes.append(38)
-                    vels.append(72)
+                    vels.append(44)
                     gates.append(60)
                     probs.append(80)
                 # 3. Closed Hat (42) & Open Hat (46)
                 if pos16 % 4 == 2:
                     notes.append(46)
-                    vels.append(98)
-                    gates.append(85)
+                    vels.append(56)
+                    gates.append(80)
                     probs.append(100)
                 elif random.random() < dens:
                     notes.append(42)
-                    vels.append(92 if pos16 % 2 == 0 else 68)
+                    vels.append(48 if pos16 % 2 == 0 else 38)
                     gates.append(55)
                     probs.append(100 if pos16 % 2 == 0 else 85)
-                # 4. Percussion / Rim / Tom accent (40, 45, 51)
-                if pos16 in (3, 9, 11, 14) and random.random() < 0.45 * dens:
-                    perc_n = random.choice([40, 45, 47, 51])
+                # 4. Percussion / Ride accent (51, 40)
+                if pos16 in (3, 9, 11, 14) and random.random() < 0.35 * dens:
+                    perc_n = random.choice([40, 51])
                     if perc_n not in notes:
                         notes.append(perc_n)
-                        vels.append(random.randint(72, 98))
+                        vels.append(random.randint(40, 54))
                         gates.append(65)
                         probs.append(random.choice([75, 90, 100]))
                 if notes:
@@ -1403,14 +1403,15 @@ class SH4dSVD:
             base_oct = 36 + root_semi  # C2..B2
             scale_pool = [base_oct + iv for iv in intervals] + [base_oct + 12, base_oct + 12 + intervals[1], base_oct + 12 + intervals[4]]
             for s in range(step_len):
-                if s % 4 == 0 or random.random() < dens:
-                    n = base_oct if s % 8 == 0 else random.choice(scale_pool)
-                    is_accent = (s % 4 == 0) or (random.random() < 0.35)
-                    is_slide = random.random() < 0.30
-                    vel = random.randint(114, 126) if is_accent else random.randint(76, 96)
-                    gate = 108 if is_slide else random.randint(48, 72)
+                if s % 4 != 0 and (s % 2 == 1 or random.random() < dens):
+                    n = base_oct if s % 4 == 2 else random.choice(scale_pool)
+                    is_accent = (s % 4 == 2) or (random.random() < 0.35)
+                    is_slide = random.random() < 0.28
+                    vel = random.randint(86, 98) if is_accent else random.randint(64, 78)
+                    gate = 104 if is_slide else random.randint(48, 68)
                     self.set_step_info(pat_idx, part_idx, s, [n], vel=vel, gate=gate, prob=100)
         elif "Bass" in role:
+            # Rolling / Offbeat Bassline that ducks Kick downbeats (steps 0, 4, 8, 12) for clean low-end headroom
             base_oct = 36 + root_semi  # C2..B2
             for s in range(step_len):
                 pos4 = s % 4
@@ -1418,39 +1419,36 @@ class SH4dSVD:
                 deg_offset = [0, intervals[min(5, len(intervals)-1)], intervals[min(3, len(intervals)-1)], intervals[min(4, len(intervals)-1)]][bar_deg]
                 root_n = base_oct + (deg_offset if s >= 16 else 0)
                 if pos4 == 2:
-                    # Classic offbeat octave or root bass hit
                     n = root_n + 12 if random.random() < 0.65 else root_n
-                    self.set_step_info(pat_idx, part_idx, s, [n], vel=112, gate=78, prob=100)
+                    self.set_step_info(pat_idx, part_idx, s, [n], vel=82, gate=68, prob=100)
                 elif pos4 == 3 and random.random() < dens:
                     n = root_n + random.choice([0, 7, 12])
-                    self.set_step_info(pat_idx, part_idx, s, [n], vel=92, gate=62, prob=95)
-                elif pos4 == 0 and (s % 8 == 0 or random.random() < 0.45 * dens):
-                    self.set_step_info(pat_idx, part_idx, s, [root_n], vel=116, gate=82, prob=100)
-                elif pos4 == 1 and random.random() < 0.4 * dens:
-                    self.set_step_info(pat_idx, part_idx, s, [root_n], vel=84, gate=55, prob=85)
+                    self.set_step_info(pat_idx, part_idx, s, [n], vel=74, gate=58, prob=95)
+                elif pos4 == 1 and random.random() < 0.75 * dens:
+                    self.set_step_info(pat_idx, part_idx, s, [root_n], vel=72, gate=55, prob=95)
         elif "Chord" in role or "Dub" in role:
-            base_oct = 48 + root_semi  # C3..B3
+            base_oct = 60 + root_semi  # C4..B4 (clean mid-register triads)
             is_dub = "Dub" in role
             prog_degrees = [0, 5, 3, 4] if len(intervals) >= 6 else [0, 2, 3, 4]
             for s in range(step_len):
                 deg = prog_degrees[(s // 4) % len(prog_degrees)]
                 chord_notes = []
-                for c_step in (0, 2, 4, 6):
+                for c_step in (0, 2, 4):
                     sc_idx = deg + c_step
                     oct_shift = (sc_idx // len(intervals)) * 12
                     semi = intervals[sc_idx % len(intervals)] + oct_shift
                     chord_notes.append(base_oct + semi)
                 if is_dub:
-                    if s % 16 in (0, 3, 6, 10, 14) and (s % 16 in (0, 6) or random.random() < dens):
+                    if s % 16 in (2, 6, 11, 14) and (s % 16 in (2, 6) or random.random() < dens):
                         self.set_step_info(
-                            pat_idx, part_idx, s, chord_notes[:4],
-                            vel=random.randint(94, 114), gate=random.randint(45, 70), prob=100,
+                            pat_idx, part_idx, s, chord_notes[:3],
+                            vel=random.randint(64, 76), gate=random.randint(45, 65), prob=100,
                         )
                 else:
-                    if s % 4 == 0:
+                    if s % 8 == 0:
                         self.set_step_info(
-                            pat_idx, part_idx, s, chord_notes[:4],
-                            vel=102, gate=98, prob=100,
+                            pat_idx, part_idx, s, chord_notes[:3],
+                            vel=68, gate=85, prob=100,
                         )
         elif "Pluck" in role or "Arp" in role:
             base_oct = 60 + root_semi  # C4..B4
@@ -1461,22 +1459,21 @@ class SH4dSVD:
                     oct_shift = (deg // len(intervals)) * 12
                     semi = intervals[deg % len(intervals)] + oct_shift
                     n = base_oct + semi
-                    vel = 110 if s % 4 == 0 else random.randint(78, 102)
-                    gate = random.randint(45, 72)
+                    vel = 80 if s % 4 == 2 else random.randint(64, 76)
+                    gate = random.randint(45, 65)
                     prob = 100 if s % 2 == 0 else random.choice([85, 95, 100])
                     self.set_step_info(pat_idx, part_idx, s, [n], vel=vel, gate=gate, prob=prob)
         else:
-            # Counter-Melody / Lead Hook
+            # Counter-Melody / Lead Hook in C4..C5 (warm, sparse call-and-response)
             base_oct = 60 + root_semi
-            motif_steps = [0, 3, 6, 8, 11, 14]
+            motif_steps = [0, 6, 11, 14]
             for s in range(step_len):
-                if (s % 16) in motif_steps or (random.random() < 0.35 * dens):
-                    deg = random.choice([0, 2, 3, 4, 6]) % len(intervals)
-                    oct_add = random.choice([0, 0, 12])
-                    n = base_oct + intervals[deg] + oct_add
+                if (s % 16) in motif_steps and (s >= 8 or random.random() < 0.65 * dens):
+                    deg = random.choice([0, 2, 4, 5]) % len(intervals)
+                    n = base_oct + intervals[deg] + random.choice([0, 12])
                     self.set_step_info(
                         pat_idx, part_idx, s, [n],
-                        vel=random.randint(90, 116), gate=random.randint(65, 95), prob=100,
+                        vel=random.randint(58, 70), gate=random.randint(55, 75), prob=100,
                     )
 
     def generate_full_pattern(
@@ -1511,17 +1508,20 @@ class SH4dSVD:
 
         parts_mixer = None
         if auto_assign_tones:
-            # Part 1: User Bass (e.g. UT001..003), Part 2: User Chord/Pad (UT009..012), Part 3: User Pluck (UT049..064 or UT004), Part 4: Lead (UT007..018), Part 5: User Kit UK01..05
-            pluck_pc = random.randint(48, 63) if self.get_patch_name(48).strip().upper() != "INIT TONE" else 3
+            # Use clean, balanced User Patches and native SH-4d Rhythm Part level (50) for zero clipping
+            has_plucks = self.get_patch_name(48).strip().upper() != "INIT TONE"
+            pluck_pc = random.choice([48, 49, 50, 51, 56, 57, 58, 59]) if has_plucks else 3
+            chord_pc = random.choice([55, 63, 51, 59]) if has_plucks else 10
+            lead_pc = random.choice([20, 49, 50, 52, 54]) if has_plucks else 20
             parts_mixer = [
-                {"msb": 87, "lsb": 0, "pc": random.choice([0, 1, 2, 19]), "level": 106, "pan": 0},
-                {"msb": 87, "lsb": 0, "pc": random.choice([8, 9, 10, 11]), "level": 88, "pan": -14},
-                {"msb": 87, "lsb": 0, "pc": pluck_pc, "level": 96, "pan": 14},
-                {"msb": 87, "lsb": 0, "pc": random.choice([6, 13, 15, 17]), "level": 86, "pan": 6},
-                {"msb": 86, "lsb": 0, "pc": random.choice([0, 1, 2, 3, 4]), "level": 112, "pan": 0},
+                {"msb": 87, "lsb": 0, "pc": random.choice([0, 1, 2]), "level": 72, "pan": 0},
+                {"msb": 87, "lsb": 0, "pc": chord_pc, "level": 74, "pan": -16},
+                {"msb": 87, "lsb": 0, "pc": pluck_pc, "level": 80, "pan": 16},
+                {"msb": 87, "lsb": 0, "pc": lead_pc, "level": 64, "pan": 8},
+                {"msb": 86, "lsb": 0, "pc": 3, "level": 50, "pan": 0},
             ]
 
-        self.set_pattern_info(pat_idx, name=pat_name, tempo=bpm, level=110, parts=parts_mixer)
+        self.set_pattern_info(pat_idx, name=pat_name, tempo=bpm, level=100, parts=parts_mixer)
         self.generate_part_sequence(pat_idx, 0, r_p1, root_key, scale_name, step_len, density_pct=70)
         self.generate_part_sequence(pat_idx, 1, r_p2, root_key, scale_name, step_len, density_pct=60)
         self.generate_part_sequence(pat_idx, 2, r_p3, root_key, scale_name, step_len, density_pct=75)
@@ -5058,13 +5058,13 @@ class SH4dEditorApp(tk.Tk):
         self.var_pc_auto_tones = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             g1,
-            text="Auto-Assign User Synth Patches & Drum Kit (Parts 1–5)",
+            text="Auto-Assign User Patches & Drum Kit (Parts 1–5)",
             variable=self.var_pc_auto_tones,
         ).pack(anchor=tk.W, pady=2)
 
         ttk.Button(
             g1,
-            text="🚀 Generate Full 5-Part Pattern (Drums + Bass + Chords + Pluck + Lead)",
+            text="🚀 Generate Full 5-Part Pattern (Parts 1–5)",
             command=self.on_pc_generate_full_pattern,
         ).pack(fill=tk.X, pady=(4, 2))
 
@@ -5724,6 +5724,14 @@ class SH4dEditorApp(tk.Tk):
             return
         if not self.svd:
             return
+        pat_idx = self._get_pc_pat_idx()
+        info = self.svd.get_pattern_info(pat_idx)
+        part_channels = [8, 9, 11, 12, 13]
+        for p_i, ch in enumerate(part_channels):
+            pt = info["parts"][p_i]
+            self.midi.send_pc(ch, pt["msb"], pt["lsb"], pt["pc"])
+            self.midi.send_cc(ch, 7, max(0, min(127, pt["level"])))
+            self.midi.send_cc(ch, 10, max(0, min(127, 64 + pt["pan"])))
         self.pat_play_running = True
         self.pat_play_step = 0
         self.btn_pc_play.config(text="⏹️ Stop Pattern Playback")
